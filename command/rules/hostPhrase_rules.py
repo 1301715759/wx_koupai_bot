@@ -28,7 +28,7 @@ def validate_time_slot_format(time_slot: str) -> Tuple[bool, Optional[str]]:
     if num1 >= num2:
         return False, f"数字顺序错误: '{time_slot}' 中第一个时间({num1})必须小于第二个时间({num2})"
     # 可以添加额外的验证，比如数字范围限制
-    if num1 < 0 or num1 > 23 or num2 < 0 or num2 > 23:
+    if num1 < 0 or num1 > 23 or num2 < 0 or num2 > 24:
         return False, f"数字范围错误: '{time_slot}' 每个对应时间范围应当为0-23的整数"
     return True, None
 
@@ -70,16 +70,7 @@ def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, int, int]]:
         # 检查时间交叉：当前起始必须大于等于上一个结束
         if num1 < last_end:
             raise ValueError(f"时间段存在重叠: '{time_slot}' 与之前的时间段出现重叠")
-        parsed_slots.append((suffix, num1, num2))
+        for num in range(num1, num2):
+            parsed_slots.append((suffix, num, num+1))
         last_end = num2
-    return parsed_slots
-    parsed_slots = []
-    for time_slot in time_slots:
-        is_valid, error_msg = validate_time_slot_format(time_slot)
-        if not is_valid:
-            raise ValueError(error_msg)
-        num1_str, num2_str, suffix = re.match(r'^(\d+)-(\d+)(\D+)$', time_slot).groups()
-        num1 = int(num1_str)
-        num2 = int(num2_str)
-        parsed_slots.append((suffix, num1, num2))
     return parsed_slots
