@@ -60,6 +60,7 @@ class CommandHandler:
                 "description": "设置扣排人数+数字（0-20）",
                 "handler": self.handle_set_koupai_limit
             }
+            
         }
     
     async def handle_command(self, command: str, group_wxid: str, **kwargs):
@@ -206,6 +207,7 @@ class CommandHandler:
                 await group_repo.add_group_host(group_wxid, start_hour, end_hour, host_desc)
             # hosts_schedules = await group_repo.get_group_hosts(group_wxid)
             # hosts_schedule = '\r'.join([f"{slot[1]}-{slot[2]} {slot[3]}" for slot in hosts_schedules])
+            await initialize_tasks.add_koupai_groups(group_wxid)
             await initialize_tasks.update_groups_tasks(group_wxid, parsed_slots)
             await send_message(group_wxid, f"主持设置成功")
             return f"主持设置成功："
@@ -240,7 +242,7 @@ class CommandHandler:
         if not end_time:
             return "命令格式错误，请使用：设置扣排截止时间20（分钟）"
         end_time = end_time.group(1).strip()
-        if int(end_time) < 0 or int(end_time) > 59:
+        if int(end_time) < 0 or int(end_time) > 60:
             return "扣排截止时间必须在0-59分钟之间"
         # 保存到数据库
         await group_repo.update_group_end_koupai(group_wxid, int(end_time))

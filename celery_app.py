@@ -3,6 +3,7 @@ import os
 from datetime import datetime
 from pydantic import BaseModel
 from datetime import timedelta
+from celery.schedules import crontab
 class TaskResult(BaseModel):
     task_id: str
     group_wxid: str
@@ -13,7 +14,7 @@ class TaskResult(BaseModel):
 celery_app = Celery(
     'task_scheduler',
     broker='redis://127.0.0.1:6379/0',      # Redis broker
-    backend='redis://127.0.0.1:6379/1',     # Redis结果存储  我们不需要存储结果
+    # backend='redis://127.0.0.1:6379/1',     # Redis结果存储  我们不需要存储结果
     include=['celery_tasks.schedule_tasks']
 )
 # 配置Celery
@@ -30,7 +31,7 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     'check-hosts-schedule-every-1-minutes': {
         'task': 'celery_tasks.schedule_tasks.scheduled_task',
-        'schedule': timedelta(seconds=60),  # 每分钟执行一次
+        'schedule': crontab(minute='*/1'),  # 每分钟执行一次
         
     },
 }

@@ -13,7 +13,7 @@ class GroupRepository:
     @staticmethod
     async def get_all_active_groups_info():
         """获取所有活跃群组信息"""
-        query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg FROM groups_config WHERE is_active = 1"
+        query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc FROM groups_config WHERE is_active = 1"
         return await db_manager.execute_query(query)
     @staticmethod
     async def get_all_active_groups():

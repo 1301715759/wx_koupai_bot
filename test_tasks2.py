@@ -1,4 +1,5 @@
 import datetime
+import time
 import redis
 
 now = datetime.datetime.now()
@@ -34,18 +35,58 @@ def get_next_minute_group(groups_wxid: list, current_minute: int) -> list:
 
     return valid_groups
 
-
+def add_with_timestamp(redis_conn, member_wxid:str, base_score:float = 0):
+    """添加成员到有序集合，分数为当前时间戳。无论如何，不带base_score的分数始终低于带base_score"""
+    cureent_time = time.time()
+    MAX_TIME = 4102444800  # 2100-01-01 的时间戳
+    
+    time_score = MAX_TIME - cureent_time
+    print(f"time_score: {time_score}")
+    # 截取整数前四位，即时间咋10000秒内的排序
+    minute_part = time_score%10000
+    print(f"minute_part: {minute_part}")
+    
+    score = base_score*100 + minute_part / 10000
+    print(f"score: {score}")
+    redis_conn.zadd("tasks:launch_tasks:49484317759@chatroom:19", {member_wxid: score})
+    time.sleep(0.0001)
 redis_conn = redis.Redis(host='127.0.0.1', port=6379, db=0, decode_responses=True)
 
-groups_keys = list(redis_conn.smembers("groups_config:koupai_groups"))
+# groups_keys = list(redis_conn.smembers("groups_config:koupai_groups"))
 
-# tasks_keys = redis_conn.keys(f"tasks:hosts_tasks:52069341938@chatroom:1")
+# # tasks_keys = redis_conn.keys(f"tasks:hosts_tasks:52069341938@chatroom:1")
 
-print(f"groups_keys: {groups_keys} {type(groups_keys)}")
-# print(f"tasks_keys: {tasks_keys}")
+# print(f"groups_keys: {groups_keys} {type(groups_keys)}")
+# # print(f"tasks_keys: {tasks_keys}")
 
-valid_groups = get_next_hour_group(groups_keys, 0)
-print(f"valid_groups: {valid_groups}")
+# valid_groups = get_next_hour_group(groups_keys, 0)
+# print(f"valid_groups: {valid_groups}")
 
-valid_groups = get_next_minute_group(groups_keys, 44)
-print(f"valid_groups: {valid_groups}")
+# valid_groups = get_next_minute_group(groups_keys, 44)
+# print(f"valid_groups: {valid_groups}")
+
+# redis_conn.set("tasks:launch_tasks:49484317759@chatroom:19","")
+
+'''
+
+redis_conn.delete("tasks:launch_tasks:49484317759@chatroom:19")
+
+add_with_timestamp("a")
+
+add_with_timestamp("b")
+
+add_with_timestamp("c")
+add_with_timestamp("d", 0.1)
+add_with_timestamp("e", 0.1)
+add_with_timestamp("f")
+add_with_timestamp("g")
+add_with_timestamp("同分不被挤出去")
+
+count = redis_conn.zcard("tasks:launch_tasks:49484317759@chatroom:19")
+print(f"count: {count}")
+members = redis_conn.zrevrange("tasks:launch_tasks:49484317759@chatroom:19", 0, 7, withscores=True)
+print(f"members: {list(members)}")
+#添加新成员后告知谁被挤出去了
+'''
+
+redis_conn.sadd(f"tasks:launch_tasks:tasks_list", "49484317759@chatroom:19")

@@ -13,6 +13,9 @@ from db.database import db_manager
 from db.repository import group_repo, command_repo
 from cache.redis_pool import get_redis_connection
 import asyncio
+from celery_tasks.schedule_tasks import scheduled_task
+
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,7 +25,7 @@ class InitializeTasks:
         self.redis_client = get_redis_connection(0)
         self.db_manager = db_manager
         self.GROUPS_CONFIG_KEY = "groups_config"
-        self.GROUPS_TASK_KEY = "tasks:hosts_tasks"
+        self.HOSTS_TASK_CONFIG_KEY = "tasks:hosts_tasks_config"
         logger.info(f"初始化任务类{__class__.__name__}")
     async def load_from_database(self):
         """从数据库加载所有组配置和主机信息"""
@@ -53,6 +56,7 @@ class InitializeTasks:
                     "maixu_desc": config[6],
                     "welcome_msg": config[7],
                     "exit_msg": config[8],
+                    "renwu_desc": config[9],
                 })
             formatted_hosts = []
             for host in hosts_schedules:
@@ -70,17 +74,24 @@ class InitializeTasks:
             for task in formatted_configs:
                 self.redis_client.hset(f"{self.GROUPS_CONFIG_KEY}:{task['group_wxid']}", mapping=task)
             for host in formatted_hosts:
-                self.redis_client.hset(f"{self.GROUPS_TASK_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)
+                self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)
             # 存储任务群组到集合
             for group_wxid in tasks_groups:
                 self.redis_client.sadd(f"{self.GROUPS_CONFIG_KEY}:koupai_groups", group_wxid)
+
+            # 初始化完redis存储后，立即执行检查任务到任务列表是否存在
+            scheduled_task.delay()
         except Exception as e:
             print(f"从数据库加载组配置失败: {e}")
-
+    
     async def update_groups_config(self, group_wxid: str, config: dict):
         """更新指定群组的配置"""
         self.redis_client.hset(f"{self.GROUPS_CONFIG_KEY}:{group_wxid}", mapping=config)
         print(f"已更新群组 {group_wxid} 的配置{config}")
+    async def add_koupai_groups(self, group_wxid: str):
+        """添加指定群组到开牌群组集合"""
+        self.redis_client.sadd(f"{self.GROUPS_CONFIG_KEY}:koupai_groups", group_wxid)
+        print(f"已添加群组 {group_wxid} 到开扣群组集合")
     async def update_groups_tasks(self, group_wxid: str, host_schedules: tuple):
         """更新指定群组的所有任务"""
         #添加前先清除旧任务
@@ -96,13 +107,13 @@ class InitializeTasks:
                 "current_koupai_info": "",
             })
         for host in formatted_hosts:
-            self.redis_client.hset(f"{self.GROUPS_TASK_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)
+            self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)
         print(f"已添加群组 {group_wxid} 的所有任务")
     async def clear_groups_tasks(self, group_wxid: str, clear_config: bool = False, clear_tasks: bool = True):
         """清除指定群组的所有任务"""
         # 1. 扫描出所有符合前缀的 key
         config_keys = [k for k in self.redis_client.scan_iter(match=f"{self.GROUPS_CONFIG_KEY}:{group_wxid}:*")] if clear_config else []
-        task_keys   = [k for k in self.redis_client.scan_iter(match=f"{self.GROUPS_TASK_KEY}:{group_wxid}:*")] if clear_tasks else []
+        task_keys   = [k for k in self.redis_client.scan_iter(match=f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:*")] if clear_tasks else []
         all_keys    = config_keys + task_keys
 
         # 2. 批量删除
@@ -116,7 +127,7 @@ class InitializeTasks:
         """清空 Redis 中所有以 GROUPS_CONFIG_KEY / GROUPS_TASK_KEY 为前缀的哈希，而不是只删顶层 key"""
         # 1. 扫描出所有符合前缀的 key
         config_keys = [k for k in self.redis_client.scan_iter(match=f"{self.GROUPS_CONFIG_KEY}:*")]
-        task_keys   = [k for k in self.redis_client.scan_iter(match=f"{self.GROUPS_TASK_KEY}:*")]
+        task_keys   = [k for k in self.redis_client.scan_iter(match=f"{self.HOSTS_TASK_CONFIG_KEY}:*")]
         all_keys    = config_keys + task_keys
 
         # 2. 批量删除
