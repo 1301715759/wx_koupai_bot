@@ -3,9 +3,12 @@ import re
 from db.repository import group_repo, command_repo
 from db.database import db_manager
 from utils.send_utils import send_message, change_groupname
-from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time_slots
+from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time_slots, parse_at_message
 import json
 from celery_tasks.initialize_tasks import initialize_tasks
+from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member
+from datetime import datetime
+from cache.redis_pool import get_redis_connection
 class CommandHandler:
     """命令处理器，处理各种用户命令"""
 
@@ -13,7 +16,7 @@ class CommandHandler:
         self.db_manager = db_manager
         self.commands = {}
         self.register_commands()
-    
+        self.redis_conn = get_redis_connection(0)
     def register_commands(self):
         """注册所有可用命令"""
         self.commands = {
@@ -59,14 +62,27 @@ class CommandHandler:
             "设置扣排人数": {
                 "description": "设置扣排人数+数字（0-20）",
                 "handler": self.handle_set_koupai_limit
+            },
+            "设置任务": {
+                "description": "设置任务描述",
+                "handler": self.handle_set_renwu
+            },
+            "取": {
+                "description": "取排",
+                "handler": self.handle_remove_member
+            },
+            "补": {
+                "description": "补排",
+                "handler": self.handle_re_member
             }
             
         }
     
     async def handle_command(self, command: str, group_wxid: str, **kwargs):
         """处理用户命令"""
-        # 先查询数据库中是否存在该群，不存在则创建
-        
+        # 如果包含艾特消息
+        # if kwargs.get("at_user"):
+        #     command = parse_at_message(command)
         # 根据命令类型进行处理
         if command.startswith("修改昵称"):
             return await self.handle_change_group_name(command, group_wxid)
@@ -88,8 +104,12 @@ class CommandHandler:
             return await self.handle_set_koupai_end_time(command, group_wxid)
         elif command.startswith("设置扣排人数"):
             return await self.handle_set_koupai_limit(command, group_wxid)
-        elif command == "p":
-            return
+        elif command.startswith("设置任务"):
+            return await self.handle_set_renwu(command, group_wxid)
+        elif command == "取":
+            return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"))
+        elif command == "补":
+            return await self.handle_re_member(group_wxid, kwargs.get("msg_owner"))
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -209,6 +229,8 @@ class CommandHandler:
             # hosts_schedule = '\r'.join([f"{slot[1]}-{slot[2]} {slot[3]}" for slot in hosts_schedules])
             await initialize_tasks.add_koupai_groups(group_wxid)
             await initialize_tasks.update_groups_tasks(group_wxid, parsed_slots)
+            # 立即执行一次扣排任务查询
+            scheduled_task.delay()
             await send_message(group_wxid, f"主持设置成功")
             return f"主持设置成功："
         else:
@@ -234,6 +256,10 @@ class CommandHandler:
         # 保存到数据库
         await group_repo.update_group_start_koupai(group_wxid, int(start_time))
         await initialize_tasks.update_groups_config(group_wxid, {"start_koupai": int(start_time)})
+        # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待1秒（不等待会出现诡异的情况）
+        if datetime.now().second == 0:
+            await asyncio.sleep(1)
+        scheduled_task.delay(koupai_type="start", update_group=group_wxid)
         await send_message(group_wxid, f"扣排开始时间已设置为：{start_time}分钟")
         return f"扣排开始时间已设置为：{start_time}分钟"
     async def handle_set_koupai_end_time(self, command: str, group_wxid: str):
@@ -242,12 +268,17 @@ class CommandHandler:
         if not end_time:
             return "命令格式错误，请使用：设置扣排截止时间20（分钟）"
         end_time = end_time.group(1).strip()
-        if int(end_time) < 0 or int(end_time) > 60:
+        
+        if int(end_time) < 0 or int(end_time) > 60 :
             return "扣排截止时间必须在0-59分钟之间"
         # 保存到数据库
         await group_repo.update_group_end_koupai(group_wxid, int(end_time))
         await group_repo.update_group_end_task(group_wxid, int(end_time))
         await initialize_tasks.update_groups_config(group_wxid, {"end_koupai": int(end_time), "end_renwu": int(end_time)})
+        # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待1秒（不等待会出现诡异的情况）
+        if datetime.now().second == 0:
+            await asyncio.sleep(1)
+        scheduled_task.delay(koupai_type="end", update_group=group_wxid)
         await send_message(group_wxid, f"扣排截止时间已设置为：{end_time}分钟")
         return f"扣排截止时间已设置为：{end_time}分钟"
     async def handle_set_koupai_limit(self, command: str, group_wxid: str):
@@ -263,6 +294,39 @@ class CommandHandler:
         await initialize_tasks.update_groups_config(group_wxid, {"limit_koupai": int(limit)})
         await send_message(group_wxid, f"扣排人数已设置为：{limit}人")
         return f"扣排人数已设置为：{limit}人"
+    async def handle_set_renwu(self, command: str, group_wxid: str):
+        """设置任务描述"""
+        if re.search(r'设置任务成功(.*)', command, re.S):
+            # 防止自我调用
+            return 
+        renwu_desc = re.search(r'设置任务(.*)', command, re.S)
+        if not renwu_desc:
+            return "命令格式错误，请使用：设置任务描述 任务描述"
+        # 0.3<0.5<1.0<互动排<1.5 这样的类型
+        renwu_desc = renwu_desc.group(1).strip()
+        # 保存到数据库
+        await group_repo.update_group_renwu_desc(group_wxid, renwu_desc)
+        await initialize_tasks.update_groups_config(group_wxid, {"renwu_desc": renwu_desc})
+        await send_message(group_wxid, f"设置任务成功：\r\n{renwu_desc}")
+        return f"任务描述已设置为：{renwu_desc}"
+    async def handle_remove_member(self, group_wxid: str, msg_owner: str):
+        """处理移除麦序成员"""
+        try:
+            delete_koupai_member.delay(group_wxid, msg_owner)
+        except Exception as e:
+            logger.error(f"移除成员时出错: {e}")
+            return f"移除成员 {msg_owner} 时出错"
+
+
+        return f"成员 {msg_owner} 已从群组中移除"
+    async def handle_re_member(self, group_wxid: str, msg_owner: str):
+        """处理补排成员"""
+        try:
+            add_koupai_member.delay(group_wxid, msg_owner,"补")
+        except Exception as e:
+            logger.error(f"补排成员时出错: {e}")
+            return f"补排成员 {msg_owner} 时出错"
+        return f"成员 {msg_owner} 已补排"
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

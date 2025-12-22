@@ -1,5 +1,15 @@
 import json
 import requests
+from utils.emoji_map import emoji_map
+def generate_custom_msg_content(**kwargs) -> str:
+    """
+    生成自定义消息内容
+    """
+    #为kwargs生成字典
+    msg = ""
+    for key, value in kwargs.items():
+        msg += f"{key}: {value}\n"
+    return msg
 
 def get_member_nick(group_wxid: str, member_wxid: str) -> str:
     """

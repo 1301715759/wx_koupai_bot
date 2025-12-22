@@ -1,6 +1,7 @@
 import datetime
 import time
 import redis
+import re
 
 now = datetime.datetime.now()
 current_minute = now.minute
@@ -89,4 +90,12 @@ print(f"members: {list(members)}")
 #添加新成员后告知谁被挤出去了
 '''
 
-redis_conn.sadd(f"tasks:launch_tasks:tasks_list", "49484317759@chatroom:19")
+# redis_conn.sadd(f"tasks:launch_tasks:tasks_list", "49484317759@chatroom:19")
+# redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", "52069341938@chatroom:1")
+
+at_text = "@\\u2764\\uFE0F\\u2005p"
+#直接分割，因为我们不需要\u2005前面的内容
+at_user_id, msg_content = at_text.split("\\u2005", 1)
+print("parts:", at_text.split("\\u2005", 1))
+print(f"at_user_id: {at_user_id}")
+print(f"msg_content: {msg_content.strip()}")

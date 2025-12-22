@@ -99,6 +99,11 @@ class GroupRepository:
         query = "UPDATE groups_config SET verify_mode = ? WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (verify_mode, group_wxid))
     @staticmethod
+    async def update_group_renwu_desc(group_wxid: str, new_renwu_desc: str):
+        """更新群组任务描述"""
+        query = "UPDATE groups_config SET renwu_desc = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (new_renwu_desc, group_wxid))
+    @staticmethod
     async def add_group_host(group_wxid: str, start_hour: int, end_hour: int, host_desc: str):
         """添加群组主持"""
         query = """

@@ -7,8 +7,11 @@ from db.database import init_database, db_manager
 from db.repository import group_repo
 from utils.send_utils import send_message
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import add_koupai_member
+from celery_tasks.schedule_tasks import add_koupai_member, update_koupai_member
+from celery_tasks.tasks_crud import get_renwu_list
 from cache.redis_pool import get_redis_connection
+import re
+from command.rules.hostPhrase_rules import parse_at_message
 # from celery_app import celery_app
 
 # app.add_middleware(
@@ -69,17 +72,28 @@ async def handle_event(event: dict):
     
     if event_type == "recvMsg" and  (group_wxid in enable_groups): 
         msg_owner = data.get("finalFromWxid", {})
+        # 当存在@list的时候先尝试解析@list中的内容，并且修改msg_owner为@list中的第一个用户
+        if data.get("atWxidList", "") and msg_content.startswith("@"):
+            msg_owner = data.get("atWxidList", "")[0]
+            msg_content = parse_at_message(msg_content)
+
         print(f"收到消息: {msg_content}")
         if msg_content.startswith(("修改昵称", "设置欢迎词", "设置退群词", "设置麦序文档", 
                                     "设置主持", "查询主持", "查询麦序文档", 
-                                    "设置扣排时间", "设置扣排截止时间", "设置扣排人数"
-                                    )):
+                                    "设置扣排时间", "设置扣排截止时间", "设置扣排人数",
+                                    "设置任务", "取", "补")):
             print(f"收到命令: {msg_content}")
-            response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner)
+            response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner,)
             print(f"命令响应: {response}")
-        elif msg_content in ["p", "P", "排"]:
+        elif msg_content in ["p", "P", "排"] :
             print(f"收到成员输入p: {msg_content}")
+            
             add_koupai_member.delay(group_wxid, msg_owner, msg_content=msg_content)
+        # 如果 msg_content 符合 多个数字.多个数字 的格式
+        elif msg_content in get_renwu_list(redis_conn, group_wxid):
+            print(f"收到成员输入对应任务: {msg_content}")
+            update_koupai_member.delay(group_wxid, msg_owner, msg_content=msg_content)
+            
             
     # 群成员进退群事件
     elif event_type == "groupMemberChanges":

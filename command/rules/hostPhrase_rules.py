@@ -74,3 +74,25 @@ def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, int, int]]:
             parsed_slots.append((suffix, num, num+1))
         last_end = num2
     return parsed_slots
+
+def parse_at_message(message: str) -> str:
+    """
+    解析消息中的原始内容
+    不包含@用户和四分之一分隔符（\\u2005），只包含消息内容
+    示例:
+        "@user1\\u2005你好" -> "你好"
+    参数:
+        message: 包含@用户和消息内容的字符串，如 "@user1\\u2005你好"
+    返回:
+        (去除掉@用户后和四分之一分隔符消息内容)
+    """
+    if message.startswith("@"):
+        try:
+            parts = message.split("\\u2005", 1)
+            print("parts:", parts)
+            # 提取被@的用户ID和消息内容
+            msg_content = parts[1].strip()
+            print("msg_content:", msg_content)
+            return msg_content
+        except IndexError:
+            return ""
