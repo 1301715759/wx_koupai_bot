@@ -81,18 +81,28 @@ def parse_at_message(message: str) -> str:
     不包含@用户和四分之一分隔符（\\u2005），只包含消息内容
     示例:
         "@user1\\u2005你好" -> "你好"
+        "你好@user1\\u2005" -> "你好"
     参数:
         message: 包含@用户和消息内容的字符串，如 "@user1\\u2005你好"
     返回:
         (去除掉@用户后和四分之一分隔符消息内容)
     """
-    if message.startswith("@"):
+    # 当消息里存在@符号和四分之一分隔符并且为单行消息
+    if "@" in message and "\\u2005" in message and "\r" not in message:
         try:
-            parts = message.split("\\u2005", 1)
-            print("parts:", parts)
-            # 提取被@的用户ID和消息内容
-            msg_content = parts[1].strip()
-            print("msg_content:", msg_content)
-            return msg_content
-        except IndexError:
-            return ""
+            print(f"原始消息: {message}")
+            # 先移除@用户部分
+            message = re.sub(r'@.*?\\u2005', '', message)
+            # 再移除四分之一分隔符
+            # message = message.replace('\\\u2005', '')
+            print(f"解析后的消息: {message}")
+            return message.strip()
+        except Exception as e:
+            print(f"解析消息时出错: {e}")
+            return message
+    else:
+        print(f"消息格式不符合at要求: {message}")
+        return message
+
+
+# print(parse_at_message("补@\\u2764\\uFE0F\\u2005"))

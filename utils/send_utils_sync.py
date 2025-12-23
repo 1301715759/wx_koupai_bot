@@ -6,10 +6,10 @@ def generate_custom_msg_content(**kwargs) -> str:
     生成自定义消息内容
     """
     #为kwargs生成字典
-    msg = ""
+    msg_dic = {}
     for key, value in kwargs.items():
-        msg += f"{key}: {value}\n"
-    return msg
+        msg_dic[key] = value
+    return msg_dic
 
 def get_member_nick(group_wxid: str, member_wxid: str) -> str:
     """
@@ -22,7 +22,7 @@ def get_member_nick(group_wxid: str, member_wxid: str) -> str:
     response = send_request(group_wxid, "getMemberNick", data)
     # print(f"@@@response: {response}")
     group_nickid = response.get("result", {}).get("groupNick", "")
-    print(f"!!!!!!!!getMemberNick response: {response}")
+    
 
     if group_nickid:
         return group_nickid

@@ -28,9 +28,9 @@ def get_next_minute_group(redis_conn, groups_wxid: list, current_minute: int, fi
     return valid_groups
 
 
-
-def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8, **kwargs):
+def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8,  **kwargs):
     """添加成员到有序集合，分数为当前时间戳。无论如何，不带base_score的分数始终低于带base_score"""
+    print(f"进入add_with_timestamp: {kwargs}")
     cureent_time = time.time()
     MAX_TIME = 4102444800  # 2100-01-01 的时间戳
     
@@ -38,7 +38,7 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
     # 截取整数前四位，即时间咋10000秒内的排序
     minute_part = time_score%10000
     
-    score = base_score*100 + minute_part / 10000
+    score = kwargs.get('extend_score', base_score*100 + minute_part / 10000 )
     # 先尝试移除对应的成员（带p）
     redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", f"{member_wxid}:p")
     # 获取限制人数内的成员，因为会有在范围内重复打榜的可能
@@ -52,6 +52,7 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
     if limit_koupai < redis_conn.zcard(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}"):
         # 移除分数最低成员（即被挤出去的成员）
         redis_conn.zremrangebyrank(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, 0)
+    print(f"add_with_timestamp: {kwargs} 成功")
     # time.sleep(0.0001)
 def delete_member(redis_conn, group_wxid: str, member_wxid: str, current_hour: int, limit_koupai: int = 8) -> int:
     """
@@ -59,6 +60,7 @@ def delete_member(redis_conn, group_wxid: str, member_wxid: str, current_hour: i
     返回剩余成员数量
     """
     # 先尝试获得所有成员
+    print(f"delete_member: [{member_wxid}]")
     members = redis_conn.zrange(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, limit_koupai-1)
     # 删除所有包含 member_wxid 的成员
     for member in members:
@@ -83,8 +85,8 @@ def get_group_task_members(redis_conn, group_wxid: str, current_hour: int, limit
     """获取群组的扣排麦序信息"""
     members = redis_conn.zrevrange(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, limit-1, withscores=True)
     # [('wxid_dofg3jonqvre22:p', 0.2816195680141449), ('wxid_2tkacjo984zq22:p', 0.28242833766937253)]
-    # 将成员id ‘wxid_dofg3jonqvre22:p’ 拆分成 wxid_dofg3jonqvre22 和 p 不需要score
-    tasks_members = [(member.split(':')[0], member.split(':')[1]) for member, _ in members]
+    # 将成员id ‘wxid_dofg3jonqvre22:p’ 拆分成 wxid_dofg3jonqvre22 和 p 需要score
+    tasks_members = [(member.split(':')[0], member.split(':')[1], score) for member, score in members]
     
     print(f"tasks_members: {tasks_members}")
     return tasks_members
@@ -114,6 +116,7 @@ def get_renwu_dict(renwu_list: list) -> dict:
         rule_dict[item] = index 
     # print(f"rules: {rule_list}")
     return rule_dict
+
 redis_conn = redis.Redis(host='127.0.0.1', port=6379, db=0, decode_responses=True)
 # get_group_task_members(redis_conn, "49484317759@chatroom", 23)
 # get_renwu_rule(redis_conn, "42973360766@chatroom")

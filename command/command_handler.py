@@ -6,7 +6,7 @@ from utils.send_utils import send_message, change_groupname
 from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time_slots, parse_at_message
 import json
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member
+from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member
 from datetime import datetime
 from cache.redis_pool import get_redis_connection
 class CommandHandler:
@@ -74,8 +74,15 @@ class CommandHandler:
             "补": {
                 "description": "补排",
                 "handler": self.handle_re_member
-            }
-            
+            },
+            "当前麦序/查询麦序/查询当前麦序": {
+                "description": "查询当前麦序",
+                "handler": self.handle_view_current_maixu
+            },
+            "转麦序": {
+                "description": "转麦序+@用户",
+                "handler": self.handle_transfer_koupai
+            },
         }
     
     async def handle_command(self, command: str, group_wxid: str, **kwargs):
@@ -106,10 +113,16 @@ class CommandHandler:
             return await self.handle_set_koupai_limit(command, group_wxid)
         elif command.startswith("设置任务"):
             return await self.handle_set_renwu(command, group_wxid)
+        elif command.startswith("查看任务"):
+            return await self.handle_view_renwu(group_wxid)
+        elif command.startswith("当前麦序") or command.startswith("查询麦序") or command.startswith("查询当前麦序"):
+            return await self.handle_view_current_maixu(group_wxid)
         elif command == "取":
             return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"))
         elif command == "补":
             return await self.handle_re_member(group_wxid, kwargs.get("msg_owner"))
+        elif command.startswith("转麦序"):
+            return await self.handle_transfer_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -309,6 +322,13 @@ class CommandHandler:
         await initialize_tasks.update_groups_config(group_wxid, {"renwu_desc": renwu_desc})
         await send_message(group_wxid, f"设置任务成功：\r\n{renwu_desc}")
         return f"任务描述已设置为：{renwu_desc}"
+    async def handle_view_current_maixu(self, group_wxid: str):
+        """查询当前麦序"""
+        get_current_maixu.delay(group_wxid)
+        # if current_maixu:
+        #     return f"当前麦序：{current_maixu}"
+        # else:
+        #     return "当前没有设置麦序"
     async def handle_remove_member(self, group_wxid: str, msg_owner: str):
         """处理移除麦序成员"""
         try:
@@ -327,6 +347,10 @@ class CommandHandler:
             logger.error(f"补排成员时出错: {e}")
             return f"补排成员 {msg_owner} 时出错"
         return f"成员 {msg_owner} 已补排"
+    async def handle_transfer_koupai(self, command: str, group_wxid: str, msg_owner: str, at_user: str):
+        """处理转麦序"""
+        transfer_koupai_member.delay(group_wxid, msg_owner, at_user, "转")
+        return f"成员 {msg_owner} 已转至 {at_user}"
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)
