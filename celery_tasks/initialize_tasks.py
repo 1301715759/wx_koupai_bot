@@ -64,9 +64,7 @@ class InitializeTasks:
                     "group_wxid": host[0],
                     "start_hour": host[1],
                     "host_desc": host[3],
-                    "lianpai_desc": host[4],
-                    "current_koupai_sum": 0,
-                    "current_koupai_info": "",
+                    "stage": host[4],
                 })
             tasks_groups = [host["group_wxid"] for host in formatted_hosts]
             logger.info(f"格式化后的任务群组: {tasks_groups}")
@@ -100,11 +98,9 @@ class InitializeTasks:
         for host in host_schedules:
             formatted_hosts.append({
                 "group_wxid": group_wxid,
-                "start_hour": host[1],
+                "start_hour": host[2],
                 "host_desc": host[0],
-                "lianpai_desc": "",
-                "current_koupai_sum": 0,
-                "current_koupai_info": "",
+                "stage": host[1],
             })
         for host in formatted_hosts:
             self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)

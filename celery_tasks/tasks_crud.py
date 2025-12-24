@@ -6,6 +6,10 @@ def get_next_hour_group(redis_conn, groups_wxid: list, current_hour: int) -> lis
     valid_groups = []
     task_hour = (current_hour + 1) % 24
     for group_wxid in groups_wxid:
+        # 先检测stage是否为start ，如果不是则跳过
+        # 不论是发送截止还是扣排任务，都需要检测stage是否为start
+        if redis_conn.hget(f"tasks:hosts_tasks_config:{group_wxid}:{task_hour}", "stage") != "start":
+            continue
         field = f"tasks:hosts_tasks_config:{group_wxid}:{task_hour}"
         # print(f"field: {field}")
         check_hour = redis_conn.keys(field)

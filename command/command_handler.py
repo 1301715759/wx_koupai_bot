@@ -83,6 +83,13 @@ class CommandHandler:
                 "description": "转麦序+@用户",
                 "handler": self.handle_transfer_koupai
             },
+            "固定排": {
+                "description": "数字-数字固定排+@用户，\r"
+                                "例如：\r"
+                                "0-2固定排@某人"
+                                ,
+                "handler": self.handle_set_fixed_koupai
+            }
         }
     
     async def handle_command(self, command: str, group_wxid: str, **kwargs):
@@ -118,11 +125,13 @@ class CommandHandler:
         elif command.startswith("当前麦序") or command.startswith("查询麦序") or command.startswith("查询当前麦序"):
             return await self.handle_view_current_maixu(group_wxid)
         elif command == "取":
-            return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"))
+            return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif command == "补":
-            return await self.handle_re_member(group_wxid, kwargs.get("msg_owner"))
+            return await self.handle_re_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif command.startswith("转麦序"):
             return await self.handle_transfer_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif "固定排" in command:
+            return await self.handle_set_fixed_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -236,8 +245,8 @@ class CommandHandler:
         # 保存到数据库
         if parsed_slots:
             for slot in parsed_slots:
-                host_desc, start_hour, end_hour = slot
-                await group_repo.add_group_host(group_wxid, start_hour, end_hour, host_desc)
+                host_desc, lianpai_desc, start_hour, end_hour = slot
+                await group_repo.add_group_host(group_wxid, start_hour, end_hour, host_desc, lianpai_desc)
             # hosts_schedules = await group_repo.get_group_hosts(group_wxid)
             # hosts_schedule = '\r'.join([f"{slot[1]}-{slot[2]} {slot[3]}" for slot in hosts_schedules])
             await initialize_tasks.add_koupai_groups(group_wxid)
@@ -249,6 +258,29 @@ class CommandHandler:
         else:
             return "设置主持内容为空"
         # print(f"设置主持内容：\n{parsed_slots}")
+    async def handle_set_fixed_koupai(self, command: str, group_wxid: str, msg_owner: str, at_user: str):
+        """处理固定排"""
+        try:
+            # 存在at_user，说明是固定操作，指向的用户应当为at_user
+            if at_user:
+                msg_owner = at_user
+            # 当command不以 数字1-数字2固定排 并且数字1 < 数字2 格式时说明格式错误。比如 0-2固定排  为正确格式
+            if not re.match(r'^\d-\d固定排$', command):
+                #格式正确时候分割数字1和数字2
+                fixed_koupai_range = command.split("固定排")[0]
+                fixed_koupai_range = fixed_koupai_range.split("-")
+                fixed_koupai_range = [int(x) for x in fixed_koupai_range]
+                if fixed_koupai_range[0] >= fixed_koupai_range[1]:
+                    return "命令格式错误，请使用：设置固定排 数字1-数字2固定排  数字1 < 数字2"
+                #从第一位开始累加
+                time_range = list(range(fixed_koupai_range[0], fixed_koupai_range[1]))
+                for start_time in time_range:
+                   await group_repo.update_group_host_with_fixed_wxid(group_wxid, start_time, start_time+1, msg_owner)
+
+        except Exception as e:
+            logger.error(f"固定排成员时出错: {e}")
+            return f"固定排成员 {msg_owner} 时出错"
+        return f"成员 {msg_owner} 已固定排至 {at_user}"
     async def handle_view_host(self, group_wxid: str):
         """处理查看主持命令"""
         hosts_schedules = await group_repo.get_group_hosts(group_wxid)
@@ -288,9 +320,9 @@ class CommandHandler:
         await group_repo.update_group_end_koupai(group_wxid, int(end_time))
         await group_repo.update_group_end_task(group_wxid, int(end_time))
         await initialize_tasks.update_groups_config(group_wxid, {"end_koupai": int(end_time), "end_renwu": int(end_time)})
-        # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待1秒（不等待会出现诡异的情况）
+        # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待3秒（不等待会出现诡异的情况）
         if datetime.now().second == 0:
-            await asyncio.sleep(1)
+            await asyncio.sleep(3)
         scheduled_task.delay(koupai_type="end", update_group=group_wxid)
         await send_message(group_wxid, f"扣排截止时间已设置为：{end_time}分钟")
         return f"扣排截止时间已设置为：{end_time}分钟"
@@ -329,9 +361,12 @@ class CommandHandler:
         #     return f"当前麦序：{current_maixu}"
         # else:
         #     return "当前没有设置麦序"
-    async def handle_remove_member(self, group_wxid: str, msg_owner: str):
+    async def handle_remove_member(self, group_wxid: str, msg_owner: str, at_user: str = ""):
         """处理移除麦序成员"""
         try:
+            # 存在at_user，说明是替取操作，指向的用户应当为at_user
+            if at_user:
+                msg_owner = at_user
             delete_koupai_member.delay(group_wxid, msg_owner)
         except Exception as e:
             logger.error(f"移除成员时出错: {e}")
@@ -339,9 +374,12 @@ class CommandHandler:
 
 
         return f"成员 {msg_owner} 已从群组中移除"
-    async def handle_re_member(self, group_wxid: str, msg_owner: str):
+    async def handle_re_member(self, group_wxid: str, msg_owner: str, at_user: str = ""):
         """处理补排成员"""
         try:
+            # 存在at_user，说明是替补操作，指向的用户应当为at_user
+            if at_user:
+                msg_owner = at_user
             add_koupai_member.delay(group_wxid, msg_owner,"补")
         except Exception as e:
             logger.error(f"补排成员时出错: {e}")
@@ -351,6 +389,7 @@ class CommandHandler:
         """处理转麦序"""
         transfer_koupai_member.delay(group_wxid, msg_owner, at_user, "转")
         return f"成员 {msg_owner} 已转至 {at_user}"
+
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

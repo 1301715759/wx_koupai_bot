@@ -93,9 +93,19 @@ print(f"members: {list(members)}")
 # redis_conn.sadd(f"tasks:launch_tasks:tasks_list", "49484317759@chatroom:19")
 # redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", "52069341938@chatroom:1")
 
-at_text = "@\\u2764\\uFE0F\\u2005p"
-#直接分割，因为我们不需要\u2005前面的内容
-at_user_id, msg_content = at_text.split("\\u2005", 1)
-print("parts:", at_text.split("\\u2005", 1))
-print(f"at_user_id: {at_user_id}")
-print(f"msg_content: {msg_content.strip()}")
+# at_text = "@\\u2764\\uFE0F\\u2005p"
+# #直接分割，因为我们不需要\u2005前面的内容
+# at_user_id, msg_content = at_text.split("\\u2005", 1)
+# print("parts:", at_text.split("\\u2005", 1))
+# print(f"at_user_id: {at_user_id}")
+# print(f"msg_content: {msg_content.strip()}")
+command = "5-11固定排"
+match = re.match(r'^\d-\d固定排$', command)
+fx_range = command.split("固定排")[0]
+fx_range = fx_range.split("-")
+fx_range = [int(x) for x in fx_range]
+#从第一位开始累加
+fx_range = list(range(fx_range[0], fx_range[1]))
+
+print(match)
+print(fx_range)

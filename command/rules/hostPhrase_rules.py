@@ -48,13 +48,13 @@ def validate_time_slots_array(time_slots: List[str]) -> Tuple[bool, Optional[str
             return False, error_msg
     return True, None
 
-def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, int, int]]:
+def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, str, int, int]]:
     """
     解析时间段字符串数组，返回数字范围和后缀
     参数:
-        time_slots: 时间段字符串数组，如 ["0-2a", "2-4b"]
+        time_slots: 时间段字符串数组，如 ["0-2a", "2-4b"] ["0-2dd连排", "2-4a"]
     返回:
-        解析后的时间段列表，每个元素为 (非数字,数字1, 数字2)
+        解析后的时间段列表，每个元素为 (非数字, 连排情况（不存在则为空字符串）, 数字1, 数字2)
     """
     # 先按起始数字从小到大排序
     time_slots_sorted = sorted(time_slots, key=lambda x: int(re.match(r'^(\d+)-', x).group(1)))
@@ -70,8 +70,18 @@ def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, int, int]]:
         # 检查时间交叉：当前起始必须大于等于上一个结束
         if num1 < last_end:
             raise ValueError(f"时间段存在重叠: '{time_slot}' 与之前的时间段出现重叠")
+        # 检查是否为连排
+        lianpai_desc = "middle" if "连排" in suffix else ""
         for num in range(num1, num2):
-            parsed_slots.append((suffix, num, num+1))
+            # 第一位设置为start
+            if num == num1:
+                lianpai_desc = "start"
+            # 最后一位设置为end
+            elif num == num2-1:
+                lianpai_desc = "end"
+            else:
+                lianpai_desc = "middle"
+            parsed_slots.append((suffix, lianpai_desc, num, num+1))
         last_end = num2
     return parsed_slots
 

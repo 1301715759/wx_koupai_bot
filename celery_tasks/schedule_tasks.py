@@ -23,7 +23,8 @@ def process_valid_groups(current_hour: int, **kwargs):
     for group_wxid in valid_groups_start:
         task_id = f"start:tasks:hosts_tasks:{group_wxid}:{(current_hour+1)%24}"
         # 先判断是否有未完成的对应任务，有的话直接跳过这个任务创建
-        if AsyncResult(task_id).state == "PENDING":
+        if AsyncResult(task_id).ready():
+            print(f"任务 {task_id} 已存在，跳过创建")
             continue
         task_start = send_koupai_task_start.s(group_wxid, current_hour).set(
                 task_id=task_id,
@@ -32,13 +33,20 @@ def process_valid_groups(current_hour: int, **kwargs):
         tasks.append(task_start)
     for group_wxid in valid_groups_end:
         task_id = f"end:tasks:hosts_tasks:{group_wxid}:{(current_hour+1)%24}"
-        if AsyncResult(task_id).state == "PENDING":
+        if AsyncResult(task_id).ready():
             continue
-        task_end = send_koupai_task_end.s(group_wxid, current_hour).set(
+        task_end = send_koupai_task_end.s(group_wxid, current_hour, task_type="end_koupai").set(
                 task_id=task_id,
                 queue="celery"
             )
-        
+    for group_wxid in valid_groups_end_renwu:
+        task_id = f"renwu:tasks:hosts_tasks:{group_wxid}:{(current_hour+1)%24}"
+        if AsyncResult(task_id).ready():    
+            continue
+        task_end = send_koupai_task_end.s(group_wxid, current_hour, task_type="end_renwu").set(
+                task_id=task_id,
+                queue="celery"
+            )
         tasks.append(task_end)
     task_group = group(tasks)
     logger.info(f"创建 group，包含 {len(tasks)} 个任务")
@@ -48,7 +56,7 @@ def process_valid_groups(current_hour: int, **kwargs):
 @celery_app.task
 def scheduled_task( koupai_type: str = "all", update_group:str = None,):
     """
-    定时任务，每分钟检查一次群组的开牌时间。
+    定时任务，每分钟检查一次群组的扣牌时间。
     """
     logger.info("每分钟定时任务开始")
     
@@ -88,7 +96,7 @@ def scheduled_task( koupai_type: str = "all", update_group:str = None,):
         utc_time = datetime.utcfromtimestamp(launch_time.timestamp())
         task_group.apply_async(eta=utc_time)
     except Exception as e:
-        logger.error(f"检查开牌任务时出错: {e}")
+        logger.error(f"检查扣牌任务时出错: {e}")
     
 
 
@@ -117,19 +125,29 @@ def send_koupai_task_start(group_wxid: str, current_hour: int):
     except Exception as e:
         logger.error(f"发送扣排任务到群组{group_wxid}时出错: {e}")
 @celery_app.task
-def send_koupai_task_end(group_wxid: str, current_hour: int):
+def send_koupai_task_end(group_wxid: str, current_hour: int, task_type: str = "end_koupai"):
     """
     发送指定群组的结束扣排信息。
     """
     try:
         print(f"发送结束扣排任务到群组{group_wxid}")
         redis_conn = get_redis_connection(0)
-        #移扣排队列中对应id
-        redis_conn.srem(f"tasks:launch_tasks:koupai_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
-        #移除任务列表
-        redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
         #获取群扣排相关信息
         group_config = get_group_config(redis_conn, group_wxid)
+        end_koupai_time = group_config["end_koupai"]
+        end_renwu_time = group_config["end_renwu"]
+
+        #移扣排队列中对应id
+        redis_conn.srem(f"tasks:launch_tasks:koupai_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
+        # 当扣排截止时间和任务截止时间相同
+        if end_koupai_time == end_renwu_time:
+            # 并且task_type为end_koupai时，移除任务列表
+            if task_type == "end_koupai":
+                redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
+            # 并且task_type为end_renwu时，不移除任务列表，并且不执行后续代码，因为已经发过结束任务了
+            if task_type == "end_renwu":
+                return
+        
         limit_koupai = int(group_config["limit_koupai"])
         hosts_config = get_group_hosts_config(redis_conn, group_wxid, current_hour)
         tasks_members = get_group_task_members(redis_conn, group_wxid, current_hour, limit_koupai)
@@ -143,7 +161,8 @@ def send_koupai_task_end(group_wxid: str, current_hour: int):
             f"{i+1}. {at_user(member)}({'手速' if koupai_type in ['p', 'P', '排'] else koupai_type})"
             for i, (member, koupai_type, score) in enumerate(tasks_members)
         )
-        ending = f"  {emoji_map.get('full', '')}\r麦序已截止" if len(tasks_members) >= limit_koupai else f"  \\uD83C\\uDE33: {limit_koupai - len(tasks_members)}\r30分钟内可补"
+        type_desc = "麦序" if task_type == "end_koupai" else "任务"
+        ending = f"  {emoji_map.get('full', '')}\r{type_desc}已截止" if len(tasks_members) >= limit_koupai else f"  \\uD83C\\uDE33: {limit_koupai - len(tasks_members)}\r30分钟内可补"
         hsot_desc = hosts_config["host_desc"]
         send_message(group_wxid, f"主持: {hsot_desc}\r"
                                  f"时间: {(current_hour+1)%24}-{((current_hour+2)%24)}\r"

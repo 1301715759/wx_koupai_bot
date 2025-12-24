@@ -58,7 +58,7 @@ class DatabaseManager:
                     end_hour INTEGER NOT NULL,          -- 结束时间(0-23)
                     host_desc TEXT,                -- 主持别称
                     lianpai_desc BOOLEAN DEFAULT 0,  -- 是否连排
-                    fixd_wxid TEXT DEFAULT '',        -- 固定主持人
+                    fixed_wxid TEXT DEFAULT '',        -- 固定主持人
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
