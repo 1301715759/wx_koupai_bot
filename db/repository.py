@@ -110,7 +110,15 @@ class GroupRepository:
         INSERT INTO host_schedule (group_wxid, start_hour, end_hour, host_desc, lianpai_desc)
         VALUES (?, ?, ?, ?, ?)
         """
-        return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc))  
+        return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc)) 
+    @staticmethod
+    async def add_group_member_benefits(group_wxid: str, member_wxid: str, card: str, num: int = 0, expire_at: str = '9999-12-31 23:59:59'):
+        """添加群组成员权益卡片"""
+        query = """
+        INSERT INTO group_members_benefits (group_wxid, member_wxid, card, num, expire_at)
+        VALUES (?, ?, ?, ?, ?)
+        """
+        return await db_manager.execute_update(query, (group_wxid, member_wxid, card, num, expire_at))
     @staticmethod
     async def delete_group_host(group_wxid: str):
         """删除指定group_wxid host记录"""

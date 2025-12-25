@@ -155,6 +155,7 @@ def send_koupai_task_start(group_wxid: str, current_hour: int):
         for fixed_host in fixed_hosts:
             # 因为固定排成员在最前面，因此基础分数设为1000
             add_with_timestamp(redis_conn, group_wxid, f"{fixed_host}:固定排", base_score=1000, current_hour=(current_hour+1)%24)
+        
         now_date = datetime.now().strftime('%m-%d')
         send_message(group_wxid, f"主持: {hsot_desc}\r"
                                  f"时间: {(current_hour+1)%24}-{((current_hour+2)%24)}\r"
@@ -188,6 +189,9 @@ def send_koupai_task_end(group_wxid: str, current_hour: int, task_type: str = "e
             if task_type == "end_renwu":
                 print(f"不执行后续代码，{task_type}")
                 return
+        elif task_type == "end_renwu":
+            # 当扣排截止时间和任务截止时间不同时并且传入类型为end_renwu时，移除任务列表
+            redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
         print(f"发送结束任务到群组{group_wxid}")
         limit_koupai = int(group_config["limit_koupai"])
         hosts_config = get_group_hosts_config(redis_conn, group_wxid, current_hour)
@@ -205,7 +209,7 @@ def send_koupai_task_end(group_wxid: str, current_hour: int, task_type: str = "e
             for i, (member, koupai_type, score) in enumerate(tasks_members)
         )
         type_desc = "麦序" if task_type == "end_koupai" else "任务"
-        ending = f"  {emoji_map.get('full', '')}\r{type_desc}已截止" if len(tasks_members) >= limit_koupai else f"  \\uD83C\\uDE33: {limit_koupai - len(tasks_members)}\r30分钟内可补"
+        ending = f"  {emoji_map.get('full', '')}\r{type_desc}已截止" if len(tasks_members) >= limit_koupai else f"  {emoji_map.get('empty', '')}: {limit_koupai - len(tasks_members)}\r30分钟内可补"
         hsot_desc = hosts_config["host_desc"]
         send_message(group_wxid, f"主持: {hsot_desc}\r"
                                  f"时间: {(current_hour+1)%24}-{((current_hour+2)%24)}\r"
@@ -247,7 +251,10 @@ def add_koupai_member(group_wxid: str, member_wxid: str, msg_content: str = "p",
                 hsot_desc = hosts_config["host_desc"]
                 tasks_members = get_group_task_members(redis_conn, group_wxid, current_hour, member_limit)
                 # tasks_members: [('wxid_2tkacjo984zq22', 'p'), ('wxid_dofg3jonqvre22', 'p')]
-                
+                mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
+                mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
+                tasks_members.extend(mai8tasks_members)
+                tasks_members.extend(mai9tasks_members)
                 print(f"当前tasks_members: {tasks_members}")
                 tasks_members_desc = "\r".join(
                     f"{i+1}. {at_user(member)}({'手速' if koupai_type in ['p', 'P', '排'] else koupai_type})"
@@ -279,6 +286,12 @@ def update_koupai_member(group_wxid: str, member_wxid: str, msg_content: str, **
             after_update_list = get_group_task_members(redis_conn, group_wxid, current_hour, limit_koupai)
             print(f"before_update_last: {before_update_list}")
             print(f"after_update_list: {after_update_list}")
+            # 插入买89
+            mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
+            mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
+            tasks_members.extend(mai8tasks_members)
+            tasks_members.extend(mai9tasks_members)
+
             tasks_members_desc = "\r".join(
                 f"{i+1}. @{get_member_nick(group_wxid, member)}({'手速' if koupai_type in ['p', 'P', '排'] else f'{koupai_type}'})"
                 for i, (member, koupai_type, score) in enumerate(after_update_list)
@@ -302,6 +315,7 @@ def add_mai89_member(group_wxid: str, member_wxid: str, msg_content: str, **kwar
     添加指定群组的买89成员。只能有一个，且不影响原来的麦序成员。
     """
     try:
+        print(f"添加买89成员{member_wxid}到群组{group_wxid}")
         redis_conn = get_redis_connection(0)
         current_hour = datetime.now().hour
         has_renwu = redis_conn.sismember(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
@@ -317,6 +331,27 @@ def add_mai89_member(group_wxid: str, member_wxid: str, msg_content: str, **kwar
             after_update_list = get_group_task_members(redis_conn, mai89group_wxid, current_hour, limit = 1)
             if before_update_list != after_update_list and len(before_update_list) != 0:
                 send_message(group_wxid, f"{at_user(member_wxid)} {msg_content} 顶 {at_user(before_update_list[-1][0])}")
+            # 更新买89后打印当前麦序
+            group_config = get_group_config(redis_conn, group_wxid)
+            hosts_config = get_group_hosts_config(redis_conn, group_wxid, current_hour)
+            limit_koupai = int(group_config.get("limit_koupai", 0))
+            tasks_members = get_group_task_members(redis_conn, group_wxid, current_hour, limit_koupai)
+            # 插入买89
+            mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
+            mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
+            tasks_members.extend(mai8tasks_members)
+            tasks_members.extend(mai9tasks_members)
+            maixu_desc = "\r".join(
+                f"{i+1}. @{get_member_nick(group_wxid, member)}({'手速' if koupai_type in ['p', 'P', '排'] else f'{koupai_type}'})"
+                for i, (member, koupai_type, score) in enumerate(tasks_members)
+            )
+            
+            send_message(group_wxid, f"主持:{hosts_config.get('host_desc', '')}\r"
+                                    f"时间:{current_hour+1}-{current_hour+2}\r"
+                                    f"{maixu_desc}\r"
+                                    f" {emoji_map.get('full', '')}\r"
+                                    f"当前已满 可扣任务")
+
     except Exception as e:
         logger.error(f"添加成员{member_wxid}到买89任务列表{group_wxid}时出错: {e}")
 @celery_app.task

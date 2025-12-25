@@ -49,6 +49,7 @@ class DatabaseManager:
                 )
                 ''')
                 
+                
                  # 创建主持时间段配置表
                 await db.execute('''
                 CREATE TABLE IF NOT EXISTS host_schedule (
@@ -85,7 +86,34 @@ class DatabaseManager:
                     UNIQUE(group_wxid, start_hour, fixed_wxid)  -- 复合唯一约束
                 )
                 ''')
-                
+                # 创建群成员身份表
+                await db.execute('''
+                CREATE TABLE IF NOT EXISTS group_members_roles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_wxid TEXT NOT NULL,             -- 群ID
+                    member_wxid TEXT NOT NULL,             -- 群成员ID
+                    roles TEXT DEFAULT 'member',             -- 群成员身份 （默认成员member，管理员admin，群主owner）
+                    is_baned BOOLEAN DEFAULT 0,             -- 是否被封禁
+                    created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
+                    UNIQUE(group_wxid, member_wxid)  -- 复合唯一约束
+                )
+                ''')
+                # 创建群成员权益卡
+                await db.execute('''
+                CREATE TABLE IF NOT EXISTS group_members_benefits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_wxid TEXT NOT NULL,             -- 群ID
+                    member_wxid TEXT NOT NULL,             -- 群成员ID
+                    card TEXT DEFAULT '',             -- 群成员权益卡片名称
+                    num INTEGER DEFAULT 0,             -- 群成员权益卡片数量
+                    expire_at TIMESTAMP DEFAULT '9999-12-31 23:59:59',  -- 过期时间，默认长期有效
+                    created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE
+                )
+                ''')
                 # 创建更新时间的触发器
                 await db.execute('''
                 CREATE TRIGGER IF NOT EXISTS update_groups_timestamp 

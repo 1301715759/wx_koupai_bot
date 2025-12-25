@@ -33,7 +33,6 @@ def get_next_minute_group(redis_conn, groups_wxid: list, current_minute: int, fi
             valid_groups.append(group_wxid)
     return valid_groups
 
-
 def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8,  **kwargs):
     """添加成员到有序集合，分数为当前时间戳。无论如何，不带base_score的分数始终低于带base_score"""
     print(f"进入add_with_timestamp: {kwargs}")
@@ -108,8 +107,6 @@ def get_renwu_list(redis_conn, group_wxid: str) -> list:
         rule_items = []
     return rule_items
 
-
-
 def get_renwu_dict(renwu_list: list) -> dict:
     """获取群组的任务规则"""
     # 返回指定字段 "0.3<0.5<1.0 .....100.0<新人置顶<魅力置顶"
@@ -122,6 +119,13 @@ def get_renwu_dict(renwu_list: list) -> dict:
         rule_dict[item] = index 
     # print(f"rules: {rule_list}")
     return rule_dict
+
+def check_koupai_limit(redis_conn, group_wxid: str, current_hour: int) -> bool:
+    """检查扣排人数是否超过限制"""
+    limit = int(get_group_config(redis_conn, group_wxid).get("limit_koupai", 8))
+    return redis_conn.zcard(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}") >= limit
+
+
 
 redis_conn = redis.Redis(host='127.0.0.1', port=6379, db=0, decode_responses=True)
 # get_group_task_members(redis_conn, "49484317759@chatroom", 23)

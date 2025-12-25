@@ -3,12 +3,14 @@ import re
 from db.repository import group_repo, command_repo
 from db.database import db_manager
 from utils.send_utils import send_message, change_groupname
+from utils.send_utils_sync import get_member_nick
 from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time_slots, parse_at_message
 import json
 from celery_tasks.initialize_tasks import initialize_tasks
 from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member
 from datetime import datetime
 from cache.redis_pool import get_redis_connection
+
 class CommandHandler:
     """命令处理器，处理各种用户命令"""
 
@@ -59,6 +61,10 @@ class CommandHandler:
                 "description": "设置扣排截止时间+数字（0-59分钟）" ,
                 "handler": self.handle_set_koupai_end_time
             },
+            "设置任务截止时间": {
+                "description": "设置任务截止时间+数字（0-59分钟）" ,
+                "handler": self.handle_set_renwu_end_time
+            },
             "设置扣排人数": {
                 "description": "设置扣排人数+数字（0-20）",
                 "handler": self.handle_set_koupai_limit
@@ -94,6 +100,10 @@ class CommandHandler:
                 "description": "清空固定排+@用户 同固定排",
                 "handler": self.handle_remove_fixed_koupai
             },
+            "查询固定排": {
+                "description": "查询固定排",
+                "handler": self.handle_view_fixed_koupai
+            },
         }
     
     async def handle_command(self, command: str, group_wxid: str, **kwargs):
@@ -120,6 +130,8 @@ class CommandHandler:
             return await self.handle_set_koupai_start_time(command, group_wxid)
         elif command.startswith("设置扣排截止时间"):
             return await self.handle_set_koupai_end_time(command, group_wxid)
+        elif command.startswith("设置任务截止时间"):
+            return await self.handle_set_renwu_end_time(command, group_wxid)
         elif command.startswith("设置扣排人数"):
             return await self.handle_set_koupai_limit(command, group_wxid)
         elif command.startswith("设置任务"):
@@ -134,10 +146,16 @@ class CommandHandler:
             return await self.handle_re_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif command.startswith("转麦序"):
             return await self.handle_transfer_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif command.startswith("查询固定排"):
+            return await self.handle_view_fixed_koupai(group_wxid)
         elif command.startswith("清空固定排"):
             return await self.handle_remove_fixed_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif "固定排" in command:
             return await self.handle_set_fixed_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif "添加管理" in command:
+            return 
+        elif command.startswith("添加"):
+            return
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -321,6 +339,27 @@ class CommandHandler:
         except Exception as e:
             # logger.error(f"清空固定排成员时出错: {e}")
             return f"清空固定排成员 {msg_owner} 时出错 {e}"
+    async def handle_view_fixed_koupai(self, group_wxid: str):
+        """处理查看固定排命令"""
+        fixed_hosts = await group_repo.get_fixed_hosts(group_wxid)
+        print(f"固定排数据：{fixed_hosts}")
+        if fixed_hosts:
+            #fixed_hosts = '\r'.join([f"{slot[1]}-{slot[2]} {get_member_nick(group_wxid, slot[3])}" for slot in fixed_hosts])
+            #相同 start_hour 中的 wxid 合并到同一行（因为我们设置的end_hour都是start_hour+1），所以start_hour 和 end_hour是同一个不需要合并
+            fixed_hosts_dict = {}
+            for slot in fixed_hosts:
+                start_hour = slot[1]
+                if start_hour not in fixed_hosts_dict:
+                    fixed_hosts_dict[start_hour] = []
+                fixed_hosts_dict[start_hour].append(f" @{get_member_nick(group_wxid, slot[3])}")
+            fixed_hosts = [f"{start_hour}-{start_hour+1} {', '.join(nicks)}" for start_hour, nicks in fixed_hosts_dict.items()]
+            # 解析并构建固定排消息
+            fixed_hosts_message = '\r'.join(fixed_hosts)
+            await send_message(group_wxid, f"固定排名单：\r{fixed_hosts_message}")
+            return f"当前固定排：\r{fixed_hosts}"
+        else:
+            return "当前没有设置固定排"
+
     async def handle_view_host(self, group_wxid: str):
         """处理查看主持命令"""
         hosts_schedules = await group_repo.get_group_hosts(group_wxid)
@@ -361,11 +400,31 @@ class CommandHandler:
         await group_repo.update_group_end_task(group_wxid, int(end_time))
         await initialize_tasks.update_groups_config(group_wxid, {"end_koupai": int(end_time), "end_renwu": int(end_time)})
         # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待3秒（不等待会出现诡异的情况）
-        if datetime.now().second == 0:
-            await asyncio.sleep(3)
+        # if datetime.now().second == 0:
+        #     await asyncio.sleep(3)
         scheduled_task.delay(koupai_type="end", update_group=group_wxid)
         await send_message(group_wxid, f"扣排截止时间已设置为：{end_time}分钟")
         return f"扣排截止时间已设置为：{end_time}分钟"
+
+    async def handle_set_renwu_end_time(self, command: str, group_wxid: str):
+        """设置任务截止时间"""
+        try:
+            end_time = re.search(r'设置任务截止时间(.*)', command)
+            if not end_time:
+                return "命令格式错误，请使用：设置任务截止时间20（分钟）"
+            end_time = end_time.group(1).strip()
+            if int(end_time) < 0 or int(end_time) > 60 :
+                return "任务截止时间必须在0-59分钟之间"
+            
+            await group_repo.update_group_end_task(group_wxid, int(end_time))
+            await initialize_tasks.update_groups_config(group_wxid, {"end_renwu": int(end_time)})
+            scheduled_task.delay(koupai_type="end", update_group=group_wxid)
+            await send_message(group_wxid, f"任务截止时间已设置为：{end_time}分钟")
+        except Exception as e:
+            return f"设置任务截止时间失败：{e}"
+
+
+    
     async def handle_set_koupai_limit(self, command: str, group_wxid: str):
         """设置扣排人数"""
         limit = re.search(r'设置扣排人数(.*)', command)
@@ -429,7 +488,17 @@ class CommandHandler:
         """处理转麦序"""
         transfer_koupai_member.delay(group_wxid, msg_owner, at_user[0], "转")
         return f"成员 {msg_owner} 已转至 {at_user[0]}"
-
+    async def handle_add_member_benefits(self, command: str, group_wxid: str, msg_owner: str, at_user: list):
+        """处理添加成员卡片"""
+        try:
+            # 存在at_user，说明是添加福利操作，指向的用户应当为at_user
+            if at_user:
+                msg_owner = at_user
+            
+        except Exception as e:
+            logger.error(f"添加成员福利时出错: {e}")
+            return f"添加成员福利 {msg_owner} 时出错"
+        return f"成员 {msg_owner} 已添加福利"
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

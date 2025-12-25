@@ -81,8 +81,9 @@ async def handle_event(event: dict):
         print(f"收到消息: {msg_content}")
         if msg_content.startswith(("修改昵称", "设置欢迎词", "设置退群词", "设置麦序文档", 
                                     "设置主持", "查询主持", "查询麦序文档", 
-                                    "设置扣排时间", "设置扣排截止时间", "设置扣排人数",
-                                    "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序", "清空固定排")) or "固定排" in msg_content:
+                                    "设置扣排时间", "设置扣排截止时间", "设置任务截止时间", "设置扣排人数",
+                                    "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序", 
+                                    "清空固定排", "查询固定排", "添加")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)
             print(f"命令响应: {response}")
