@@ -12,20 +12,51 @@ from datetime import datetime, timedelta
 import logging
 from cache.redis_pool import get_redis_connection
 from celery_tasks.tasks_crud import *
+import json
+from contextlib import contextmanager
+
+
 logger = logging.getLogger(__name__)
+@contextmanager
+def task_lock(redis_conn, task_key, timeout=30):
+    """
+    分布式任务锁
+    """
+    lock_key = f"task_lock:{task_key}"
+    
+    # 尝试获取锁
+    acquired = redis_conn.set(lock_key, 'locked', nx=True, ex=timeout)
+    print(f"尝试获取锁 {lock_key}，结果: {acquired}")
+    try:
+        if acquired:
+            yield True  # 获得锁，可以执行
+        else:
+            yield False  # 未获得锁，跳过执行
+    finally:
+        # 执行完成后释放锁（如果是我们获得的）
+        if acquired:
+            redis_conn.delete(lock_key)
 
 def process_valid_groups(current_hour: int, **kwargs):
     """处理符合下一个分钟扣排任务的群组"""
     valid_groups_start = kwargs.get("valid_groups_start", [])
     valid_groups_end = kwargs.get("valid_groups_end", [])
     valid_groups_end_renwu = kwargs.get("valid_groups_end_renwu", [])
+    print(f"valid_groups_start: {valid_groups_start}")
+    print(f"valid_groups_end: {valid_groups_end}")
+    print(f"valid_groups_end_renwu: {valid_groups_end_renwu}")
     tasks = []
+    redis_conn = get_redis_connection()
     for group_wxid in valid_groups_start:
         task_id = f"start:tasks:hosts_tasks:{group_wxid}:{(current_hour+1)%24}"
+        # 检查是否有未完成的对应任务
+        with task_lock(redis_conn, task_id) as lock_acquired:
+            if not lock_acquired:
+                continue
         # 先判断是否有未完成的对应任务，有的话直接跳过这个任务创建
-        if AsyncResult(task_id).ready():
-            print(f"任务 {task_id} 已存在，跳过创建")
-            continue
+        # if AsyncResult(task_id).state == "PENDING":
+        #     print(f"开始任务 {task_id} 已存在，状态为 {AsyncResult(task_id).state}")
+        #     continue
         task_start = send_koupai_task_start.s(group_wxid, current_hour).set(
                 task_id=task_id,
                 queue="celery"
@@ -33,21 +64,25 @@ def process_valid_groups(current_hour: int, **kwargs):
         tasks.append(task_start)
     for group_wxid in valid_groups_end:
         task_id = f"end:tasks:hosts_tasks:{group_wxid}:{(current_hour+1)%24}"
-        if AsyncResult(task_id).ready():
-            continue
-        task_end = send_koupai_task_end.s(group_wxid, current_hour, task_type="end_koupai").set(
+        with task_lock(redis_conn, task_id) as lock_acquired:
+            if not lock_acquired:
+                continue
+        task_end = send_koupai_task_end.s(group_wxid, current_hour, "end_koupai").set(
                 task_id=task_id,
                 queue="celery"
             )
+        
+        tasks.append(task_end)
     for group_wxid in valid_groups_end_renwu:
         task_id = f"renwu:tasks:hosts_tasks:{group_wxid}:{(current_hour+1)%24}"
-        if AsyncResult(task_id).ready():    
-            continue
-        task_end = send_koupai_task_end.s(group_wxid, current_hour, task_type="end_renwu").set(
+        with task_lock(redis_conn, task_id) as lock_acquired:
+            if not lock_acquired:
+                continue
+        task_renwu = send_koupai_task_end.s(group_wxid, current_hour, "end_renwu").set(
                 task_id=task_id,
                 queue="celery"
             )
-        tasks.append(task_end)
+        tasks.append(task_renwu)
     task_group = group(tasks)
     logger.info(f"创建 group，包含 {len(tasks)} 个任务")
     return task_group
@@ -72,6 +107,7 @@ def scheduled_task( koupai_type: str = "all", update_group:str = None,):
     else:
         groups_keys = list(redis_conn.smembers("groups_config:koupai_groups"))
     valid_groups = []
+    print(f"groups_keys 所有扣牌任务群组: {groups_keys}")
     # 检查下一个小时的开牌任务
     try:
         valid_groups = get_next_hour_group(redis_conn, groups_keys, current_hour)
@@ -87,8 +123,6 @@ def scheduled_task( koupai_type: str = "all", update_group:str = None,):
         if koupai_type != "start":
             valid_groups_end = get_next_minute_group(redis_conn, valid_groups, current_minute, "end_koupai") 
             valid_groups_end_renwu = get_next_minute_group(redis_conn, valid_groups, current_minute, "end_renwu") 
-        print(f"valid_groups 下一个分钟的扣牌任务: {valid_groups_start}")
-
         task_group = process_valid_groups(current_hour, valid_groups_start=valid_groups_start, valid_groups_end=valid_groups_end, valid_groups_end_renwu=valid_groups_end_renwu)
         launch_time = now.replace(minute=current_minute, second=0, microsecond=0)
         print(f"下一分钟到了就开始执行扣排任务: {launch_time}")
@@ -115,6 +149,12 @@ def send_koupai_task_start(group_wxid: str, current_hour: int):
         maixu_desc, verify_mode = group_config["maixu_desc"], group_config["verify_mode"]
         hosts_config = get_group_hosts_config(redis_conn, group_wxid, current_hour)
         hsot_desc = hosts_config["host_desc"]
+        # 固定排成员
+        fixed_hosts = json.loads(hosts_config["fixed_hosts"])
+        # 先往扣排队列里添加固定排成员
+        for fixed_host in fixed_hosts:
+            # 因为固定排成员在最前面，因此基础分数设为1000
+            add_with_timestamp(redis_conn, group_wxid, f"{fixed_host}:固定排", base_score=1000, current_hour=(current_hour+1)%24)
         now_date = datetime.now().strftime('%m-%d')
         send_message(group_wxid, f"主持: {hsot_desc}\r"
                                  f"时间: {(current_hour+1)%24}-{((current_hour+2)%24)}\r"
@@ -130,7 +170,7 @@ def send_koupai_task_end(group_wxid: str, current_hour: int, task_type: str = "e
     发送指定群组的结束扣排信息。
     """
     try:
-        print(f"发送结束扣排任务到群组{group_wxid}")
+        print(f"===发送结束扣排任务到群组{group_wxid}==={task_type}===")
         redis_conn = get_redis_connection(0)
         #获取群扣排相关信息
         group_config = get_group_config(redis_conn, group_wxid)
@@ -146,15 +186,18 @@ def send_koupai_task_end(group_wxid: str, current_hour: int, task_type: str = "e
                 redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
             # 并且task_type为end_renwu时，不移除任务列表，并且不执行后续代码，因为已经发过结束任务了
             if task_type == "end_renwu":
+                print(f"不执行后续代码，{task_type}")
                 return
-        
+        print(f"发送结束任务到群组{group_wxid}")
         limit_koupai = int(group_config["limit_koupai"])
         hosts_config = get_group_hosts_config(redis_conn, group_wxid, current_hour)
+        # 普通排成员
         tasks_members = get_group_task_members(redis_conn, group_wxid, current_hour, limit_koupai)
         mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
         mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
         # print(f"mai8tasks_members: {mai8tasks_members}")
         # print(f"mai9tasks_members: {mai9tasks_members}")
+
         tasks_members.extend(mai8tasks_members)
         tasks_members.extend(mai9tasks_members)
         tasks_members_desc = "\r".join(
@@ -332,6 +375,10 @@ def get_current_maixu(group_wxid: str, **kwargs):
         redis_conn = get_redis_connection(0)
         current_hour = datetime.now().hour
         current_maixu = get_group_task_members(redis_conn, group_wxid, current_hour,0)
+        mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
+        mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
+        current_maixu.extend(mai8tasks_members)
+        current_maixu.extend(mai9tasks_members)
         current_desc = "\r".join(
                 f"{i+1}. {get_member_nick(group_wxid, member)}({'手速' if koupai_type in ['p', 'P', '排'] else f'{koupai_type}'})"
                 for i, (member, koupai_type, score) in enumerate(current_maixu)

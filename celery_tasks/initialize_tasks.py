@@ -35,7 +35,9 @@ class InitializeTasks:
             print(f"从数据库加载的组配置: {groups_configs}")
             # 加载所有主持信息
             hosts_schedules = await group_repo.get_all_hosts()
-            
+            # 加载所有固定排成员信息
+            fixed_hosts_schedules = await group_repo.get_all_fixed_hosts()
+            print(f"从数据库加载的固定排成员信息: {fixed_hosts_schedules}")
             # print(f"从数据库加载的组配置: {groups_configs}")
             # groups_configs 
             # 字段顺序：group_id, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode
@@ -59,13 +61,23 @@ class InitializeTasks:
                     "renwu_desc": config[9],
                 })
             formatted_hosts = []
+            # print(f"从数据库加载的主持信息: {hosts_schedules}")
             for host in hosts_schedules:
+                fixed_wxid = []
+                for fixed_host in fixed_hosts_schedules:
+                   # 检查是否匹配当前host的固定排成员
+                    # print(f"当前host: {host}, 固定排成员: {fixed_host}")
+                    if host[0] == fixed_host[0] and host[1] == fixed_host[1]:
+                        fixed_wxid.append(fixed_host[3])
                 formatted_hosts.append({
                     "group_wxid": host[0],
                     "start_hour": host[1],
                     "host_desc": host[3],
                     "stage": host[4],
+                    
+                    "fixed_hosts": json.dumps(fixed_wxid),
                 })
+                
             tasks_groups = [host["group_wxid"] for host in formatted_hosts]
             logger.info(f"格式化后的任务群组: {tasks_groups}")
             # print(f"格式化后的组配置: {formatted_hosts}")
@@ -93,18 +105,48 @@ class InitializeTasks:
     async def update_groups_tasks(self, group_wxid: str, host_schedules: tuple):
         """更新指定群组的所有任务"""
         #添加前先清除旧任务
-        self.clear_groups_tasks(group_wxid, clear_config=False)
+        await self.clear_groups_tasks(group_wxid, clear_config=False)
+        # 查询固定排成员
+        fixed_hosts_schedules = await group_repo.get_fixed_hosts(group_wxid)
         formatted_hosts = []
         for host in host_schedules:
+            fixed_wxid = []
+            for fixed_host in fixed_hosts_schedules:
+                # 检查是否匹配当前host的固定排成员
+                print(f"当前host: {host}, 固定排成员: {fixed_host}")
+                if host[2] == fixed_host[1]:
+                    fixed_wxid.append(fixed_host[3])
+                    break
             formatted_hosts.append({
                 "group_wxid": group_wxid,
                 "start_hour": host[2],
                 "host_desc": host[0],
                 "stage": host[1],
+                "fixed_hosts": json.dumps(fixed_wxid)
             })
         for host in formatted_hosts:
             self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)
         print(f"已添加群组 {group_wxid} 的所有任务")
+    async def update_group_tasks_fixed_hosts(self, group_wxid: str):
+        """更新指定群fixed_hosts"""
+        # print(f"更新群组 {group_wxid} 的所有任务的fixed_hosts")
+        # 查询固定排成员
+        fixed_hosts_schedules = await group_repo.get_fixed_hosts(group_wxid)
+        # print(f"从数据库加载的固定排成员: {fixed_hosts_schedules}")
+        # 获取指定key值的群组
+        groups = self.redis_client.keys(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:*")
+        # print(f"从redis加载的群组: {groups}")
+        for group in groups:
+            
+            fixed_hosts = []
+            start_hour = self.redis_client.hget(group, "start_hour")
+            for fixed_host in fixed_hosts_schedules:
+                # 检查是否匹配当前host的固定排成员
+                if str(fixed_host[1]) == start_hour:
+                    
+                    fixed_hosts.append(fixed_host[3])
+            self.redis_client.hset(group, mapping={"fixed_hosts": json.dumps(fixed_hosts)})
+        print(f"已更新群组 {group_wxid} 的所有任务的fixed_hosts")
     async def clear_groups_tasks(self, group_wxid: str, clear_config: bool = False, clear_tasks: bool = True):
         """清除指定群组的所有任务"""
         # 1. 扫描出所有符合前缀的 key
@@ -116,7 +158,7 @@ class InitializeTasks:
         if all_keys:
             self.redis_client.delete(*all_keys)
         logger.info(f"已清空 {len(all_keys)} 条任务相关 key")
-        logger.info(f"群组 {group_id} 的所有任务已清除")
+        logger.info(f"群组 {group_wxid} 的所有任务已清除")
 
     async def clear_all_tasks(self):
         """清除所有任务"""

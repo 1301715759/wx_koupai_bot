@@ -1,7 +1,7 @@
 """数据库仓库模块，提供对各个表的操作方法"""
 
 from .database import db_manager
-
+import json
 class GroupRepository:
     """群组信息数据访问类"""
     
@@ -104,28 +104,35 @@ class GroupRepository:
         query = "UPDATE groups_config SET renwu_desc = ? WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (new_renwu_desc, group_wxid))
     @staticmethod
-    async def add_group_host(group_wxid: str, start_hour: int, end_hour: int, host_desc: str, lianpai_desc: str = "", fixed_wxid: str = ""):
+    async def add_group_host(group_wxid: str, start_hour: int, end_hour: int, host_desc: str, lianpai_desc: str = ""):
         """添加群组主持"""
         query = """
-        INSERT INTO host_schedule (group_wxid, start_hour, end_hour, host_desc, lianpai_desc, fixed_wxid)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO host_schedule (group_wxid, start_hour, end_hour, host_desc, lianpai_desc)
+        VALUES (?, ?, ?, ?, ?)
         """
-        return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc, fixed_wxid))  
+        return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc))  
     @staticmethod
     async def delete_group_host(group_wxid: str):
         """删除指定group_wxid host记录"""
         query = "DELETE FROM host_schedule WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (group_wxid,))
     @staticmethod
-    async def update_group_host_with_fixed_wxid(group_wxid: str, start_hour: int, end_hour: int, fixed_wxid: str = ""):
-        """直接更新存在相同group_wxid和start_hour数据，不存在直接插入"""
+    async def delete_group_fixed_host(group_wxid: str, fixed_wxid: str):
+        """删除指定group_wxid fixed_host记录"""
+        query = "DELETE FROM fixed_host_schedule WHERE group_wxid = ? AND fixed_wxid = ?"
+        return await db_manager.execute_update(query, (group_wxid, fixed_wxid))
+    @staticmethod
+    async def add_group_host_with_fixed_wxid(group_wxid: str, start_hour: int, end_hour: int, fixed_wxid: str):
+        """
+        存在相同group_wxid和start_hour fixed_wxid 那就不添加
+        不存在就直接插入。
+        """
         query = """
-        INSERT INTO host_schedule (group_wxid, start_hour, end_hour, fixed_wxid)
+        INSERT OR IGNORE INTO fixed_host_schedule (group_wxid, start_hour, end_hour, fixed_wxid)
         VALUES (?, ?, ?, ?)
-        ON CONFLICT(group_wxid, start_hour) 
-        DO UPDATE SET end_hour = excluded.end_hour, fixed_wxid = excluded.fixed_wxid
         """
         return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, fixed_wxid))
+         
     @staticmethod
     async def get_group_hosts(group_wxid: str):
         """获取群组主持信息"""
@@ -143,11 +150,20 @@ class GroupRepository:
         """
         return await db_manager.execute_query(query)
     @staticmethod
+    async def get_fixed_hosts(group_wxid: str):
+        """获取群组固定排成员信息"""
+        query = "SELECT group_wxid, start_hour, end_hour, fixed_wxid FROM fixed_host_schedule WHERE group_wxid = ? ORDER BY start_hour"
+        return await db_manager.execute_query(query, (group_wxid,))
+    @staticmethod
     async def get_all_hosts():
         """获取所有群组主持信息"""
         query = "SELECT group_wxid, start_hour, end_hour, host_desc, lianpai_desc  FROM host_schedule ORDER BY group_wxid, start_hour"
         return await db_manager.execute_query(query)
-
+    @staticmethod
+    async def get_all_fixed_hosts():
+        """获取所有群组固定排成员信息"""
+        query = "SELECT group_wxid, start_hour, end_hour, fixed_wxid FROM fixed_host_schedule ORDER BY group_wxid, start_hour"
+        return await db_manager.execute_query(query)
 class CommandRepository:
     """命令记录数据访问类"""
     

@@ -70,17 +70,19 @@ def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, str, int, int]]:
         # 检查时间交叉：当前起始必须大于等于上一个结束
         if num1 < last_end:
             raise ValueError(f"时间段存在重叠: '{time_slot}' 与之前的时间段出现重叠")
-        # 检查是否为连排
-        lianpai_desc = "middle" if "连排" in suffix else ""
+        print(f"!!!suffix: {suffix}")
         for num in range(num1, num2):
             # 第一位设置为start
-            if num == num1:
-                lianpai_desc = "start"
-            # 最后一位设置为end
-            elif num == num2-1:
-                lianpai_desc = "end"
+            if "连排" in suffix:
+                if num == num1:
+                    lianpai_desc = "start"
+                # 最后一位设置为end
+                elif num == num2-1:
+                    lianpai_desc = "end"
+                else:
+                    lianpai_desc = "middle"
             else:
-                lianpai_desc = "middle"
+                lianpai_desc = "start"
             parsed_slots.append((suffix, lianpai_desc, num, num+1))
         last_end = num2
     return parsed_slots

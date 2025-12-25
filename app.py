@@ -75,14 +75,14 @@ async def handle_event(event: dict):
         at_user = None
         # 当存在@list的时候先尝试解析@list中的内容，并且修改msg_owner为@list中的第一个用户
         if data.get("atWxidList", "") :
-            at_user = data.get("atWxidList", "")[0]
+            at_user = data.get("atWxidList", "")
             msg_content = parse_at_message(msg_content)
 
         print(f"收到消息: {msg_content}")
         if msg_content.startswith(("修改昵称", "设置欢迎词", "设置退群词", "设置麦序文档", 
                                     "设置主持", "查询主持", "查询麦序文档", 
                                     "设置扣排时间", "设置扣排截止时间", "设置扣排人数",
-                                    "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序")) or "固定排" in msg_content:
+                                    "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序", "清空固定排")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)
             print(f"命令响应: {response}")
@@ -90,15 +90,15 @@ async def handle_event(event: dict):
         elif msg_content in ["p", "P", "排"] :
             print(f"收到成员输入p:[{msg_owner}]: {msg_content}")
             
-            add_koupai_member.delay(group_wxid, member_wxid = at_user if at_user else msg_owner, msg_content=msg_content,)
+            add_koupai_member.delay(group_wxid, member_wxid = at_user[0] if at_user else msg_owner, msg_content=msg_content,)
             return
         # 如果 msg_content 符合 数字.多个数字 的格式
         elif msg_content in get_renwu_list(redis_conn, group_wxid) or msg_content.startswith(("买8", "买9")):
             print(f"收到成员输入对应任务: {msg_content}")
             if msg_content.startswith(("买8", "买9")):
-                add_mai89_member.delay(group_wxid, member_wxid = at_user if at_user else msg_owner, msg_content=msg_content)
+                add_mai89_member.delay(group_wxid, member_wxid = at_user[0] if at_user else msg_owner, msg_content=msg_content)
             else:
-                update_koupai_member.delay(group_wxid, member_wxid = at_user if at_user else msg_owner, msg_content=msg_content)
+                update_koupai_member.delay(group_wxid, member_wxid = at_user[0] if at_user else msg_owner, msg_content=msg_content)
             return
             
     # 群成员进退群事件

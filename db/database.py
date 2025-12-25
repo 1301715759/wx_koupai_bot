@@ -52,19 +52,37 @@ class DatabaseManager:
                  # 创建主持时间段配置表
                 await db.execute('''
                 CREATE TABLE IF NOT EXISTS host_schedule (
-                    -- id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     group_wxid TEXT NOT NULL,             -- 群ID
                     start_hour INTEGER NOT NULL,        -- 开始时间(0-23)
                     end_hour INTEGER NOT NULL,          -- 结束时间(0-23)
                     host_desc TEXT,                -- 主持别称
                     lianpai_desc BOOLEAN DEFAULT 0,  -- 是否连排
+                    -- fixed_wxid TEXT DEFAULT '[]',        -- 固定主持人 暂时弃用改为额外表存储
+                    created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
+                    CHECK(start_hour >= 0 AND start_hour <= 23),
+                    CHECK(end_hour >= 0 AND end_hour <= 24),
+                    CHECK(start_hour < end_hour),      -- 开始时间必须小于结束时间
+                    UNIQUE(group_wxid, start_hour)  -- 复合唯一约束
+                )
+                ''')
+                # 创建固定排时间段表
+                await db.execute('''
+                CREATE TABLE IF NOT EXISTS fixed_host_schedule (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_wxid TEXT NOT NULL,             -- 群ID
+                    start_hour INTEGER NOT NULL,        -- 开始时间(0-23)
+                    end_hour INTEGER NOT NULL,          -- 结束时间(0-23)
                     fixed_wxid TEXT DEFAULT '',        -- 固定主持人
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
                     CHECK(start_hour >= 0 AND start_hour <= 23),
                     CHECK(end_hour >= 0 AND end_hour <= 24),
-                    CHECK(start_hour < end_hour)      -- 开始时间必须小于结束时间
+                    CHECK(start_hour < end_hour),      -- 开始时间必须小于结束时间
+                    UNIQUE(group_wxid, start_hour, fixed_wxid)  -- 复合唯一约束
                 )
                 ''')
                 

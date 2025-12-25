@@ -9,6 +9,7 @@ def get_next_hour_group(redis_conn, groups_wxid: list, current_hour: int) -> lis
         # 先检测stage是否为start ，如果不是则跳过
         # 不论是发送截止还是扣排任务，都需要检测stage是否为start
         if redis_conn.hget(f"tasks:hosts_tasks_config:{group_wxid}:{task_hour}", "stage") != "start":
+            print(f"群组 {group_wxid} 下一个小时 {task_hour} 不是扣牌时间")
             continue
         field = f"tasks:hosts_tasks_config:{group_wxid}:{task_hour}"
         # print(f"field: {field}")
@@ -26,7 +27,8 @@ def get_next_minute_group(redis_conn, groups_wxid: list, current_minute: int, fi
         key = f"groups_config:{group_wxid}"
         # print(f"field: {key}")
         check_minute = (redis_conn.hget(key, field) == str(task_minute))
-        print(f"!!!!check_minute: {check_minute}")
+        print(f"群组 {group_wxid} 下一个分钟 {task_minute} 检查结果 {check_minute}")
+        # print(f"!!!!check_minute: {check_minute}")
         if check_minute:
             valid_groups.append(group_wxid)
     return valid_groups
