@@ -93,18 +93,7 @@ print(f"members: {list(members)}")
 # redis_conn.sadd(f"tasks:launch_tasks:tasks_list", "49484317759@chatroom:19")
 # redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", "52069341938@chatroom:1")
 
-at_text = "@1234\\u2005@No.0744\\u2005p"
-#直接分割，因为我们不需要\u2005前面的内容
-message = re.sub(r'@.*?\\u2005', '', at_text)
-print(f"message: {message.strip()}")
-# print(f"msg_content: {msg_content.strip()}")
-# command = "5-11固定排"
-# match = re.match(r'^\d-\d固定排$', command)
-# fx_range = command.split("固定排")[0]
-# fx_range = fx_range.split("-")
-# fx_range = [int(x) for x in fx_range]
-# #从第一位开始累加
-# fx_range = list(range(fx_range[0], fx_range[1]))
-
-# print(match)
-# print(fx_range)
+command = "设置手速不可"
+match = re.search(r'设置手速不可取(.*)', command)
+if match:
+    print(f"match: {match}")

@@ -43,12 +43,19 @@ class DatabaseManager:
                     limit_koupai INTEGER DEFAULT 8,    --  最大人数 
                     verify_mode TEXT DEFAULT '字符',     --  扣排模式
                     renwu_desc TEXT DEFAULT '0.3<0.5<1.0<1.5<2.0<2.5<3.0<3.5<4.0<4.5<5.0<5.5<6.0<6.5<7.0<7.5<8.0<8.5<9.0<9.5<10.0<11.0<12.0<13.0<14.0<15.0<16.0<17.0<18.0<19.0<20.0<21.0<22.0<23.0<24.0<25.0<26.0<27.0<28.0<29.0<30.0<31.0<32.0<33.0<34.0<35.0<36.0<37.0<38.0<39.0<40.0<41.0<42.0<43.0<44.0<45.0<46.0<47.0<48.0<49.0<50.0<51.0<52.0<53.0<54.0<55.0<56.0<57.0<58.0<59.0<60.0<61.0<62.0<63.0<64.0<65.0<66.0<67.0<68.0<69.0<70.0<71.0<72.0<73.0<74.0<75.0<76.0<77.0<78.0<79.0<80.0<81.0<82.0<83.0<84.0<85.0<86.0<87.0<88.0<89.0<90.0<91.0<92.0<93.0<94.0<95.0<96.0<97.0<98.0<99.0<100.0<新人置顶<魅力置顶',         --  任务描述
-                    re_time INTEGER DEFAULT 30,          --  设置补位时间(单位分钟)
+                    re_time INTEGER DEFAULT 0,          --  设置补位时间(单位分钟)
+                    qu_time INTEGER DEFAULT 0,          --  设置取位时间(单位分钟)
+                    p_qu BOOLEAN DEFAULT 1,              --  设置补位p是否可取(0不可取1可取，默认可取)
+                    renwu_qu BOOLEAN DEFAULT 0,          --  设置任务是否可取(0不可取1可取，默认不可取)
+                    bb_time INTEGER DEFAULT 15,          --  设置报备时间(单位分钟)
+                    bb_limit INTEGER DEFAULT 1,          --  设置报备人数上限
+                    bb_in_hour INTEGER DEFAULT 2,        -- 设置一小时内的报备次数，默认2次
+                    bb_timeout_desc TEXT DEFAULT '您已超时。', -- 设置超时提醒词
+                    bb_back_desc TEXT DEFAULT '回。', -- 设置回厅词
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime'))
                 )
                 ''')
-                
                 
                  # 创建主持时间段配置表
                 await db.execute('''
@@ -100,6 +107,7 @@ class DatabaseManager:
                     UNIQUE(group_wxid, member_wxid)  -- 复合唯一约束
                 )
                 ''')
+                
                 # 创建群成员权益卡
                 await db.execute('''
                 CREATE TABLE IF NOT EXISTS group_members_benefits (
@@ -111,9 +119,16 @@ class DatabaseManager:
                     expire_at TIMESTAMP DEFAULT '9999-12-31 23:59:59',  -- 过期时间，默认长期有效
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
-                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE
+                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
+                    UNIQUE(group_wxid, member_wxid, card)  -- 复合唯一约束
                 )
                 ''')
+                # 手动添加约束，因为数据表我们已经创建
+                await db.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS uk_group_member_card 
+                    ON group_members_benefits(group_wxid, member_wxid, card)
+                """)
+
                 # 创建更新时间的触发器
                 await db.execute('''
                 CREATE TRIGGER IF NOT EXISTS update_groups_timestamp 

@@ -59,6 +59,15 @@ class InitializeTasks:
                     "welcome_msg": config[7],
                     "exit_msg": config[8],
                     "renwu_desc": config[9],
+                    "re_time": config[10],
+                    "qu_time": config[11],
+                    "p_qu": config[12],
+                    "renwu_qu": config[13],
+                    "bb_time": config[14],
+                    "bb_limit": config[15],
+                    "bb_in_hour": config[16],
+                    "bb_timeout_desc": config[17],
+                    "bb_back_desc": config[18],
                 })
             formatted_hosts = []
             # print(f"从数据库加载的主持信息: {hosts_schedules}")

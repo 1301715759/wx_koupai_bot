@@ -53,6 +53,7 @@ app = FastAPI(lifespan=lifespan)
 async def handle_event(event: dict):
     """处理微信回调事件"""
     event_type = event.get("type", 0)
+    local_wxid = event.get("wxid", "")
     print(f"完整数据: {json.dumps(event, ensure_ascii=False, indent=4)}")
     data = event.get("data", {})
     msg_content = data.get("msg", "")
@@ -60,6 +61,8 @@ async def handle_event(event: dict):
     print(f"group_wxid: {group_wxid}")
     # 处理消息事件
     # 文本消息
+    if local_wxid == data.get("finalFromWxid", ""):
+        return
     if event_type == "recvMsg" and msg_content == "ping" and group_wxid not in enable_groups:
         print(f"{group_wxid}收到ping，激活群机器人")
         
@@ -83,7 +86,7 @@ async def handle_event(event: dict):
                                     "设置主持", "查询主持", "查询麦序文档", 
                                     "设置扣排时间", "设置扣排截止时间", "设置任务截止时间", "设置扣排人数",
                                     "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序", 
-                                    "清空固定排", "查询固定排", "添加")) or "固定排" in msg_content:
+                                    "清空固定排", "查询固定排", "添加", "设置手速", "设置任务排")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)
             print(f"命令响应: {response}")

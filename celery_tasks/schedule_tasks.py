@@ -289,8 +289,8 @@ def update_koupai_member(group_wxid: str, member_wxid: str, msg_content: str, **
             # 插入买89
             mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
             mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
-            tasks_members.extend(mai8tasks_members)
-            tasks_members.extend(mai9tasks_members)
+            after_update_list.extend(mai8tasks_members)
+            after_update_list.extend(mai9tasks_members)
 
             tasks_members_desc = "\r".join(
                 f"{i+1}. @{get_member_nick(group_wxid, member)}({'手速' if koupai_type in ['p', 'P', '排'] else f'{koupai_type}'})"
@@ -347,32 +347,59 @@ def add_mai89_member(group_wxid: str, member_wxid: str, msg_content: str, **kwar
             )
             
             send_message(group_wxid, f"主持:{hosts_config.get('host_desc', '')}\r"
-                                    f"时间:{current_hour+1}-{current_hour+2}\r"
-                                    f"{maixu_desc}\r"
-                                    f" {emoji_map.get('full', '')}\r"
-                                    f"当前已满 可扣任务")
+                                     f"时间:{current_hour+1}-{current_hour+2}\r"
+                                     f"{maixu_desc}\r"
+                                     f" {emoji_map.get('full', '')}\r"
+                                     f"当前已满 可扣任务")
 
     except Exception as e:
         logger.error(f"添加成员{member_wxid}到买89任务列表{group_wxid}时出错: {e}")
 @celery_app.task
 def delete_koupai_member(group_wxid: str, member_wxid: str, **kwargs):
     """
-    删除指定群组的成员从开牌任务列表中。
+    删除指定群组的成员从扣牌任务列表中。
+    消息内容一般为 取 的时候触发
     """
     try:
         redis_conn = get_redis_connection(0)
         current_hour = datetime.now().hour
-        has_renwu = redis_conn.sismember(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
-        if not has_renwu:
-            limit_koupai = int(redis_conn.hget(f"groups_config:{group_wxid}", "limit_koupai"))
-            remaining_members = delete_member(redis_conn, group_wxid, member_wxid, (current_hour+1)%24, limit_koupai)
-            print(f"剩余: {remaining_members}")
-            if remaining_members > 0:
-                send_message(group_wxid, f"{get_member_nick(group_wxid, member_wxid)}你已取排成功\r"
-                                        f"当前{emoji_map.get('empty', '')}: {remaining_members}"
-                                            )
-        if has_renwu:
-            send_message(group_wxid, f"主持已设置任务期间不可取")
+        current_minute = datetime.now().minute
+        group_config = get_group_config(redis_conn, group_wxid)
+
+        # 获取 任务是否可取、手速是否可取、取排时间（为0默认为任意时间可取）、扣排人数
+        renwu_qu = int(group_config.get("renwu_qu", 0))
+        p_qu = int(group_config.get("p_qu", 0))
+        qu_time = int(group_config.get("qu_time", 0))
+        limit_koupai = int(group_config.get("limit_koupai", 0))
+        # 获取扣排队列（包括买89）中所有成员
+        task_members = get_group_task_members(redis_conn, group_wxid, current_hour, limit_koupai)
+        mai8tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai8", current_hour, limit=1)
+        mai9tasks_members = get_group_task_members(redis_conn, f"{group_wxid}:mai9", current_hour, limit=1)
+        #插入买89
+        task_members.extend(mai8tasks_members)
+        task_members.extend(mai9tasks_members)
+        # 获取成员的扣排类型
+        member_type = next((koupai_type for member, koupai_type, score in task_members if member == member_wxid), None)
+        if not member_type:
+            send_message(group_wxid, f"{get_member_nick(group_wxid, member_wxid)} 不在扣牌列表中")
+            return
+        if member_type in ['p', 'P', '排'] and p_qu == 0:
+            send_message(group_wxid, f"群已设置手速不可取")
+            return
+        if member_type in group_config.get("renwu_desc", []) and renwu_qu == 0:
+            send_message(group_wxid, f"群已设置取任务不可取")
+            return
+        if qu_time != 0 and current_minute > qu_time:
+            send_message(group_wxid, f"当前不是取排时间")
+            return
+        if member_type.startswith("买8") or member_type.startswith("买9"):
+            group_wxid_this = f"{group_wxid}:mai8" if member_type.startswith("买8") else f"{group_wxid}:mai9"
+        remaining_members = delete_member(redis_conn, group_wxid_this, member_wxid, (current_hour+1)%24, limit_koupai)
+        print(f"剩余: {remaining_members}")
+        if remaining_members > 0:
+            send_message(group_wxid, f"{get_member_nick(group_wxid, member_wxid)}你已取排成功\r"
+                                    f"当前{emoji_map.get('empty', '')}: {remaining_members}"
+                                        )
     except Exception as e:
         logger.error(f"删除成员{member_wxid}从扣牌任务列表{group_wxid}时出错: {e}")
 @celery_app.task
@@ -424,30 +451,77 @@ def get_current_maixu(group_wxid: str, **kwargs):
             send_message(group_wxid, "当前没有设置麦序")
     except Exception as e:
         logger.error(f"查询当前麦序时出错: {e}")
+@celery_app.task
+def add_bb_member(group_wxid: str, member_wxid: str, msg_content: str, **kwargs):
+    """
+    添加报备
+    """
+    redis_conn = get_redis_connection(0)
+    current_hour = datetime.now().hour
+    current_minute = datetime.now().minute
+    # 获取报备相关内容
+    group_config = get_group_config(group_wxid)
+    bb_time = int(group_config.get("bb_time", 15))
+    bb_limit = int(group_config.get("bb_limit", 2))
+    bb_in_hour = int(group_config.get("bb_in_hour", "0"))
+    bb_timeout_desc = group_config.get("bb_timeout_desc", "您已超时。")
+    bb_back_desc = group_config.get("bb_back_desc", "回。")
+    # 获取指定群id下的报备列表
+    bb_list = redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_hour}:*")
+    # 获取还没回来的成员数量
+    bb_sum = 0
+    if bb_list:
+        for bb_key in bb_list:
+            is_back = redis_conn.hget(bb_key, "is_back")
+            if is_back == "0":
+                bb_sum += 1
+    if bb_sum >= bb_limit:
+        send_message(group_wxid, f"已超过报备人数\r当前设置报备人数:{bb_limit}人")
+        return
+    # 获取报备列表中当前小时成员的报备的次数
+    bb_count = len(redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_hour}:{member_wxid}:*"))
+    # 检查是否超过了一小时内的报备次数
+    if bb_in_hour >= bb_count:
+        send_message(group_wxid, f"已超过每小时报备次数\r当前设置小时报备次数:{bb_in_hour}次")
+        return
+    # 加入报备列表
+    # 计算过期时间（datetime格式）
+    time_out = datetime.now() + timedelta(minutes=bb_time)
+    redis_conn.hset(f"history:bb:{current_hour}:{member_wxid}:{current_minute}", 
+                "group_wxid", group_wxid, "member_wxid", member_wxid, "msg_content", msg_content,
+                "create_time", datetime.now().strftime("%H:%M"),"timeout_time", time_out.strftime("%H:%M"),
+                "is_timeout", "0", "is_back", "0")
+    # 发送报备成功消息
+    send_message(group_wxid, f"{at_user(member_wxid)}{bb_time}分钟之内回来，回厅再发一个“{bb_back_desc}”")
+    # 将过期时间转为utc时间
+    time_out_utc = time_out.astimezone(timezone.utc)
+    # 将timeout任务添加到celery队列，到过期时间时候执行，并且指定task_id，方便我们控制
+    send_timeout_message.apply_async(args=[group_wxid, member_wxid, bb_timeout_desc, current_hour, current_minute], 
+                                    eta=time_out_utc, task_id=f"send_timeout_{group_wxid}_{member_wxid}")
 
+@celery_app.task
+def send_timeout_message(group_wxid: str, member_wxid: str, bb_timeout_desc: str, current_hour: int, current_minute: int, **kwargs):
+    """
+    发送报备超时消息
+    """
+    send_message(group_wxid, f"{at_user(member_wxid)}{bb_timeout_desc}")
+    redis_conn = get_redis_connection(0)
+    # 标记为超时
+    redis_conn.hset(f"history:bb:{current_hour}:{member_wxid}:{current_minute}", "is_timeout", "1")
 
-# @celery_app.task
-# def set_koupai_tasks(koupai_data: dict):
-#     """
-#     设置指定群组的开牌时间。
-#     """
-#     # 将字典转换为KoupaiModel对象
-#     koupai_model = KoupaiModel(**koupai_data)
+@celery_app.task
+def delete_timeout_member(group_wxid: str, member_wxid: str):
+    """
+    删除超时报备
+    """
+    redis_conn = get_redis_connection(0)
+    # 先删除超时任务
+    result = AsyncResult(f"send_timeout_{group_wxid}_{member_wxid}")
+    result.revoke(terminate=True)
+    send_message(group_wxid, f"{get_next_minute_group(group_wxid)}欢迎回来。")
+    # 将is_back设置为1
+    redis_conn.hset(f"history:bb:{current_hour}:{member_wxid}:{current_minute}", "is_back", "1")
+
     
-#     # 解析时间字符串为分钟数
-#     try:
-#         start_minutes = int(koupai_model.start_time)
-#     except ValueError:
-#         return f"无效的时间格式: {koupai_model.start_time}"
     
-#     # 检查时间是否在有效范围内
-#     if not (0 <= start_minutes <= 59):
-#         return f"时间必须在0到59之间: {koupai_model.start_time}"
     
-#     # 存储开牌时间
-#     redis_conn = get_redis_connection(0)
-#     # 使用mapping参数将整个模型存储为哈希表，将None值转换为空字符串
-#     koupai_dict = {k: v if v is not None else "" for k, v in koupai_model.dict().items()}
-#     redis_conn.hset(f"koupai:{koupai_model.group_wxid}", mapping=koupai_dict)
-#     print(f"开牌时间已设置为: {start_minutes}分")
-#     return f"开牌时间已设置为: {start_minutes}分"

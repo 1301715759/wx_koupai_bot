@@ -8,7 +8,7 @@ from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time
 import json
 from celery_tasks.initialize_tasks import initialize_tasks
 from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member
-from datetime import datetime
+from datetime import datetime, timedelta
 from cache.redis_pool import get_redis_connection
 
 class CommandHandler:
@@ -81,6 +81,22 @@ class CommandHandler:
                 "description": "补排",
                 "handler": self.handle_re_member
             },
+            "设置补位时间": {
+                "description": "设置补位时间+数字（0-59分钟）",
+                "handler": self.handle_set_re_time
+            },
+            "设置取时间": {
+                "description": "设置取时间+数字（0-59分钟）",
+                "handler": self.handle_set_qu_time
+            },
+            "设置手速可取/不可取": {
+                "description": "切换手速排是否可取",
+                "handler": self.handle_set_p_qu
+            },
+            "设置任务排可取/不可取": {
+                "description": "切换任务排是否可取",
+                "handler": self.handle_set_renwu_qu
+            },
             "当前麦序/查询麦序/查询当前麦序": {
                 "description": "查询当前麦序",
                 "handler": self.handle_view_current_maixu
@@ -104,6 +120,39 @@ class CommandHandler:
                 "description": "查询固定排",
                 "handler": self.handle_view_fixed_koupai
             },
+            "添加xxx卡片": {
+                "description": "添加xxx卡片+@多个用户+过期时间（可选，默认1天）+数量（可选，默认1张）",
+                "handler": self.handle_add_member_benefits
+            },
+            "设置报备时间": {
+                "description": "设置报备时间+数字",
+                "handler": self.handle_set_bb_time
+            },
+            "设置超时提示词": {
+                "description": "设置超时提示词+提示词",
+                "handler": self.handle_set_timeout_desc
+            },
+            "设置报备时间": {
+                "description": "设置报备时间+数字",
+                "handler": self.handle_set_bb_time
+            },
+            "设置报备人数": {
+                "description": "设置报备人数+数字",
+                "handler": self.handle_set_bb_limit
+            },
+            "设置报备超时提示词": {
+                "description": "设置报备超时提示词+提示词",   
+                "handler": self.handle_set_timeout_desc
+            },
+            "设置报备次数": {
+                "description": "设置报备次数+数字",
+                "handler": self.handle_set_bb_in_hour
+            },
+            "设置报备回厅词": {
+                "description": "设置报备回厅词+提示词",
+                "handler": self.handle_set_bb_back_desc
+            },
+
         }
     
     async def handle_command(self, command: str, group_wxid: str, **kwargs):
@@ -134,16 +183,24 @@ class CommandHandler:
             return await self.handle_set_renwu_end_time(command, group_wxid)
         elif command.startswith("设置扣排人数"):
             return await self.handle_set_koupai_limit(command, group_wxid)
-        elif command.startswith("设置任务"):
-            return await self.handle_set_renwu(command, group_wxid)
-        elif command.startswith("查看任务"):
-            return await self.handle_view_renwu(group_wxid)
         elif command.startswith("当前麦序") or command.startswith("查询麦序") or command.startswith("查询当前麦序"):
             return await self.handle_view_current_maixu(group_wxid)
         elif command == "取":
             return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif command == "补":
             return await self.handle_re_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif command.startswith("设置补位时间"):
+            return await self.handle_set_re_time(command, group_wxid)
+        elif command.startswith("设置取时间"):
+            return await self.handle_set_qu_time(command, group_wxid)
+        elif command.startswith("设置手速"):
+            return await self.handle_set_p_qu(command, group_wxid)
+        elif command.startswith("设置任务排"):
+            return await self.handle_set_renwu_qu(command, group_wxid)
+        elif command.startswith("设置任务"):
+            return await self.handle_set_renwu(command, group_wxid)
+        elif command.startswith("查看任务"):
+            return await self.handle_view_renwu(group_wxid)
         elif command.startswith("转麦序"):
             return await self.handle_transfer_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif command.startswith("查询固定排"):
@@ -155,7 +212,17 @@ class CommandHandler:
         elif "添加管理" in command:
             return 
         elif command.startswith("添加"):
-            return
+            return await self.handle_add_member_benefits(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif command.startswith("设置报备时间"):
+            return await self.handle_set_bb_time(command, group_wxid)
+        elif command.startswith("设置报备人数"):
+            return await self.handle_set_bb_limit(command, group_wxid)
+        elif command.startswith("设置报备超时提示词"):
+            return await self.handle_set_timeout_desc(command, group_wxid)
+        elif command.startswith("设置报备次数"):
+            return await self.handle_set_bb_in_hour(command, group_wxid)
+        elif command.startswith("设置报备回厅词"):
+            return await self.handle_set_bb_back_desc(command, group_wxid)
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -451,7 +518,7 @@ class CommandHandler:
         # 保存到数据库
         await group_repo.update_group_renwu_desc(group_wxid, renwu_desc)
         await initialize_tasks.update_groups_config(group_wxid, {"renwu_desc": renwu_desc})
-        await send_message(group_wxid, f"设置任务成功：\r\n{renwu_desc}")
+        await send_message(group_wxid, f"设置任务成功：\r{renwu_desc}")
         return f"任务描述已设置为：{renwu_desc}"
     async def handle_view_current_maixu(self, group_wxid: str):
         """查询当前麦序"""
@@ -484,21 +551,184 @@ class CommandHandler:
             logger.error(f"补排成员时出错: {e}")
             return f"补排成员 {msg_owner} 时出错"
         return f"成员 {msg_owner} 已补排"
+    
+    async def handle_set_re_time(self, command: str, group_wxid: str):
+        """设置补时间"""
+        try:
+            re_time = re.search(r'设置补时间(.*)', command)
+            if not re_time:
+                return "命令格式错误，请使用：设置补时间20（分钟）"
+            re_time = re_time.group(1).strip()
+            if int(re_time) < 0 or int(re_time) > 59:
+                return "补时间必须在0-59分钟之间"
+            
+            await group_repo.update_group_re_time(group_wxid, int(re_time))
+            await initialize_tasks.update_groups_config(group_wxid, {"re_time": int(re_time)})
+            await send_message(group_wxid, f"补时间已设置为：{re_time}分钟")
+        except Exception as e:
+            return f"设置补时间失败：{e}"
+
+    async def handle_set_qu_time(self, command: str, group_wxid: str):
+        """设置取时间"""
+        try:
+            qu_time = re.search(r'设置取时间(.*)', command)
+            if not qu_time:
+                return "命令格式错误，请使用：设置取时间20（分钟）"
+            qu_time = qu_time.group(1).strip()
+            if int(qu_time) < 0 or int(qu_time) > 59:
+                return "取时间必须在0-59分钟之间"
+            
+            await group_repo.update_group_qu_time(group_wxid, int(qu_time))
+            await initialize_tasks.update_groups_config(group_wxid, {"qu_time": int(qu_time)})
+            await send_message(group_wxid, f"取时间已设置为：{qu_time}分钟")
+        except Exception as e:
+            return f"设置取时间失败：{e}"
+    async def handle_set_p_qu(self, command: str, group_wxid: str):
+        """切换手速排是否可取"""
+        try:
+            # 格式为 设置手速可取 或者 设置手速不可取
+            p_qu = re.search(r'设置手速(.*)', command)
+            if not p_qu:
+                return 
+            p_qu = p_qu.group(1).strip()
+            if p_qu not in ["可取", "不可取"]:
+                return 
+
+            await group_repo.update_group_p_qu(group_wxid, p_qu == "可取")
+            await initialize_tasks.update_groups_config(group_wxid, {"p_qu": int(p_qu == "可取")})
+            await send_message(group_wxid, f"手速排是否可取已设置为：{p_qu}")
+        except Exception as e:
+            return f"设置手速排是否可取失败：{e}"
+    async def handle_set_renwu_qu(self, command: str, group_wxid: str):
+        """设置任务排是否可取"""
+        try:
+            renwu_qu = re.search(r'设置任务排(.*)', command)
+            if not renwu_qu:
+                return 
+            renwu_qu = renwu_qu.group(1).strip()
+            if renwu_qu not in ["可取", "不可取"]:
+                return 
+            
+            await group_repo.update_group_renwu_qu(group_wxid, renwu_qu == "可取")
+            await initialize_tasks.update_groups_config(group_wxid, {"renwu_qu": int(renwu_qu == "可取")})
+            await send_message(group_wxid, f"任务排是否可取已设置为：{renwu_qu}")
+        except Exception as e:
+            return f"设置任务排是否可取失败：{e}"
+
     async def handle_transfer_koupai(self, command: str, group_wxid: str, msg_owner: str, at_user: list):
         """处理转麦序"""
         transfer_koupai_member.delay(group_wxid, msg_owner, at_user[0], "转")
         return f"成员 {msg_owner} 已转至 {at_user[0]}"
     async def handle_add_member_benefits(self, command: str, group_wxid: str, msg_owner: str, at_user: list):
-        """处理添加成员卡片"""
+        """添加群组成员权益卡片"""
         try:
-            # 存在at_user，说明是添加福利操作，指向的用户应当为at_user
-            if at_user:
-                msg_owner = at_user
-            
+            # 处理格式为 添加[自定义内容]*天*张 *张为必须。如果不存在*天则默认永久
+            # 例子：添加新人置顶7天3张  分割为 新人置顶 7天 3张
+            # 例子：添加新人置顶3张  分割为 新人置顶 3张
+            match = re.search(r'添加(.+?)(?:(\d+)天)?(\d+)张', command)
+            if match:
+                msg_owner = msg_owner[0]
+                # 存在at_user，为
+                if at_user:
+                    msg_owner = at_user
+                card = match.group(1).strip()
+                # 转化为过期的datetime日期
+                expire_time = datetime.now() + timedelta(days=int(match.group(2) or 0))
+                print(f"expire_time: {expire_time} {msg_owner}")
+                num = int(match.group(3))
+                # 添加群组成员权益卡片
+                for member in msg_owner:
+                    await group_repo.add_group_member_benefits(group_wxid, member, card, num, expire_time)
+                    await send_message(group_wxid, f"{card}添加成功\r"
+                                                    f"昵称:{ get_member_nick(group_wxid, member)}\r"
+                                                    f"过期时间:{expire_time.strftime('%Y-%m-%d %H:%M:%S')}\r"
+                                                    f"添加数量:{num}张"
+                                        )
+
+
+
         except Exception as e:
-            logger.error(f"添加成员福利时出错: {e}")
-            return f"添加成员福利 {msg_owner} 时出错"
+            return f"添加成员福利 {msg_owner} 时出错{str(e)}"
         return f"成员 {msg_owner} 已添加福利"
+    async def handle_set_bb_time(self, command: str, group_wxid: str):
+        """设置报备时间"""
+        try:
+            # 格式为 设置报备时间20（分钟）
+            bb_time = re.search(r'设置报备时间(\d+)', command)
+            if not bb_time:
+                return "命令格式错误，请使用：设置报备时间20（分钟）"
+            bb_time = bb_time.group(1).strip()
+            if int(bb_time) < 0 or int(bb_time) > 59:
+                return "报备时间必须在0-59分钟之间"
+            
+            await group_repo.update_group_bb_time(group_wxid, int(bb_time))
+            await initialize_tasks.update_groups_config(group_wxid, {"bb_time": int(bb_time)})
+            await send_message(group_wxid, f"报备时间已设置为：{bb_time}分钟")
+        except Exception as e:
+            return f"设置报备时间失败：{e}"
+    
+    async def handle_set_bb_limit(self, command: str, group_wxid: str):
+        """设置报备人数"""
+        try:
+            # 格式为 设置报备人数20（人）
+            bb_limit = re.search(r'设置报备人数(\d+)', command)
+            if not bb_limit:
+                return "命令格式错误，请使用：设置报备人数20（人）"
+            bb_limit = bb_limit.group(1).strip()
+            if int(bb_limit) < 0 or int(bb_limit) > 100:
+                return "报备人数必须在0-100人之间"
+            
+            await group_repo.update_group_bb_limit(group_wxid, int(bb_limit))
+            await initialize_tasks.update_groups_config(group_wxid, {"bb_limit": int(bb_limit)})
+            await send_message(group_wxid, f"报备人数已设置为：{bb_limit}人")
+        except Exception as e:
+            return f"设置报备人数失败：{e}"
+    
+    async def handle_set_timeout_desc(self, command: str, group_wxid: str):
+        """设置报备超时提示词"""
+        try:
+            # 格式为 设置报备超时提示词超时后提示词
+            timeout_desc = re.search(r'设置报备超时提示词(.+)', command)
+            if not timeout_desc:
+                return "命令格式错误，请使用：设置报备超时提示词超时后提示词"
+            timeout_desc = timeout_desc.group(1).strip()
+            
+            await group_repo.update_group_timeout_desc(group_wxid, timeout_desc)
+            await initialize_tasks.update_groups_config(group_wxid, {"timeout_desc": timeout_desc})
+            await send_message(group_wxid, f"报备超时提示词已设置为：{timeout_desc}")
+        except Exception as e:
+            return f"设置报备超时提示词失败：{e}"
+    
+    async def handle_set_bb_in_hour(self, command: str, group_wxid: str):
+        """设置小时报备次数"""
+        try:
+            # 格式为 设置报备次数20（次）
+            bb_in_hour = re.search(r'设置报备次数(\d+)', command)
+            if not bb_in_hour:
+                return "命令格式错误，请使用：设置报备次数20（次）"
+            bb_in_hour = bb_in_hour.group(1).strip()
+
+            await group_repo.update_group_bb_in_hour(group_wxid, int(bb_in_hour))
+            await initialize_tasks.update_groups_config(group_wxid, {"bb_in_hour": int(bb_in_hour)})
+            await send_message(group_wxid, f"报备次数已经设置为: {bb_in_hour}")
+        except Exception as e:
+            return f"设置报备次数失败：{e}"
+
+    async def handle_set_bb_back_desc(self, command: str, group_wxid: str):
+        """设置报备回厅词"""
+        try:
+            # 格式为 设置报备回厅词回厅词
+            bb_back_desc = re.search(r'设置报备回厅词(.+)', command)
+            if not bb_back_desc:
+                return "命令格式错误，请使用：设置报备回厅词回厅词"
+            bb_back_desc = bb_back_desc.group(1).strip()
+            
+            await group_repo.update_group_bb_back_desc(group_wxid, bb_back_desc)
+            await initialize_tasks.update_groups_config(group_wxid, {"bb_back_desc": bb_back_desc})
+            await send_message(group_wxid, f"报备回厅词已设置为：{bb_back_desc}")
+        except Exception as e:
+            return f"设置报备回厅词失败：{e}"
+
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

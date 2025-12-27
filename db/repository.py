@@ -13,7 +13,7 @@ class GroupRepository:
     @staticmethod
     async def get_all_active_groups_info():
         """获取所有活跃群组信息"""
-        query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc FROM groups_config WHERE is_active = 1"
+        query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc, re_time, qu_time, p_qu, renwu_qu, bb_time, bb_limit, bb_in_hour, bb_timeout_desc, bb_back_desc FROM groups_config WHERE is_active = 1"
         return await db_manager.execute_query(query)
     @staticmethod
     async def get_all_active_groups():
@@ -112,12 +112,64 @@ class GroupRepository:
         """
         return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc)) 
     @staticmethod
-    async def add_group_member_benefits(group_wxid: str, member_wxid: str, card: str, num: int = 0, expire_at: str = '9999-12-31 23:59:59'):
+    async def update_group_re_time(group_wxid: str, re_time: int):
+        """更新群组补位时间"""
+        query = "UPDATE groups_config SET re_time = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (re_time, group_wxid))
+    @staticmethod
+    async def update_group_p_qu(group_wxid: str, p_qu: bool):
+        """更新群组手速不可取"""
+        query = "UPDATE groups_config SET p_qu = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (p_qu, group_wxid))
+    @staticmethod
+    async def update_group_renwu_qu(group_wxid: str, renwu_qu: bool):
+        """更新群组任务排不可取"""
+        query = "UPDATE groups_config SET renwu_qu = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (renwu_qu, group_wxid))
+    @staticmethod
+    async def update_group_qu_time(group_wxid: str, qu_time: int):
+        """更新群组取时间"""
+        query = "UPDATE groups_config SET qu_time = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (qu_time, group_wxid))
+    @staticmethod
+    async def update_group_bb_time(group_wxid: str, bb_time: int):
+        """更新群组报备时间"""
+        query = "UPDATE groups_config SET bb_time = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (bb_time, group_wxid))
+    @staticmethod
+    async def update_group_bb_limit(group_wxid: str, bb_limit: int):
+        """更新群组报备最大人数"""
+        query = "UPDATE groups_config SET bb_limit = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (bb_limit, group_wxid))
+    @staticmethod
+    async def update_group_bb_in_hour(group_wxid: str, bb_in_hour: int):
+        """更新群组报备小时内报备次数"""  
+        query = "UPDATE groups_config SET bb_in_hour = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (bb_in_hour, group_wxid))
+    @staticmethod
+    async def update_group_timeout_desc(group_wxid: str, timeout_desc: str):
+        """更新群组超时提醒词"""
+        query = "UPDATE groups_config SET timeout_desc = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (timeout_desc, group_wxid))
+    @staticmethod
+    async def update_group_bb_back_desc(group_wxid: str, bb_back_desc: str):
+        """更新群组回厅词"""
+        query = "UPDATE groups_config SET bb_back_desc = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (bb_back_desc, group_wxid))
+    @staticmethod
+    async def add_group_member_benefits(group_wxid: str, member_wxid: str, card: str, num: int, expire_at: str = '9999-12-31 23:59:59'):
         """添加群组成员权益卡片"""
+        # 添加的时候应当检查是否存在相同的记录
+        # 如果存在相同的记录，那么就更新expire_at, num = old_num+new_num
         query = """
         INSERT INTO group_members_benefits (group_wxid, member_wxid, card, num, expire_at)
         VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(group_wxid, member_wxid, card) DO UPDATE SET
+            num = num + excluded.num,
+            expire_at = excluded.expire_at,
+            updated_at = datetime(CURRENT_TIMESTAMP, 'localtime')
         """
+
         return await db_manager.execute_update(query, (group_wxid, member_wxid, card, num, expire_at))
     @staticmethod
     async def delete_group_host(group_wxid: str):
