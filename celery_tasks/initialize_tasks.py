@@ -68,6 +68,8 @@ class InitializeTasks:
                     "bb_in_hour": config[16],
                     "bb_timeout_desc": config[17],
                     "bb_back_desc": config[18],
+                    "fixed_p_num": config[19],
+                    "fixed_renwu_desc": config[20],
                 })
             formatted_hosts = []
             # print(f"从数据库加载的主持信息: {hosts_schedules}")
@@ -143,7 +145,7 @@ class InitializeTasks:
         fixed_hosts_schedules = await group_repo.get_fixed_hosts(group_wxid)
         # print(f"从数据库加载的固定排成员: {fixed_hosts_schedules}")
         # 获取指定key值的群组
-        groups = self.redis_client.keys(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:*")
+        groups = list(self.redis_client.scan_iter(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:*"))
         # print(f"从redis加载的群组: {groups}")
         for group in groups:
             

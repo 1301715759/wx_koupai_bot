@@ -13,7 +13,7 @@ def get_next_hour_group(redis_conn, groups_wxid: list, current_hour: int) -> lis
             continue
         field = f"tasks:hosts_tasks_config:{group_wxid}:{task_hour}"
         # print(f"field: {field}")
-        check_hour = redis_conn.keys(field)
+        check_hour = redis_conn.scan_iter(field)
         if not check_hour:
             continue
         valid_groups.append(group_wxid)
@@ -43,7 +43,7 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
     # 截取整数前四位，即时间咋10000秒内的排序
     minute_part = time_score%10000
     
-    score = kwargs.get('extend_score', base_score*100 + minute_part / 10000 )
+    score = kwargs.get('extend_score', base_score + minute_part / 10000 )
     # 先尝试移除对应的成员（带p）
     redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", f"{member_wxid}:p")
     # 获取限制人数内的成员，因为会有在范围内重复打榜的可能

@@ -7,7 +7,7 @@ from db.database import init_database, db_manager
 from db.repository import group_repo
 from utils.send_utils import send_message
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import add_koupai_member, update_koupai_member, add_mai89_member
+from celery_tasks.schedule_tasks import add_koupai_member, update_koupai_member, add_mai89_member, add_bb_member, delete_bb_member
 from celery_tasks.tasks_crud import get_renwu_list
 from cache.redis_pool import get_redis_connection
 import re
@@ -86,7 +86,9 @@ async def handle_event(event: dict):
                                     "设置主持", "查询主持", "查询麦序文档", 
                                     "设置扣排时间", "设置扣排截止时间", "设置任务截止时间", "设置扣排人数",
                                     "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序", 
-                                    "清空固定排", "查询固定排", "添加", "设置手速", "设置任务排")) or "固定排" in msg_content:
+                                    "清空固定排", "查询固定排", "添加", "设置手速", "设置任务排",
+                                    "设置报备时间", "设置报备人数", "设置固定手速",
+                                    "设置报备次数", "设置报备回厅词", "设置报备超时提示词")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)
             print(f"命令响应: {response}")
@@ -96,7 +98,14 @@ async def handle_event(event: dict):
             
             add_koupai_member.delay(group_wxid, member_wxid = at_user[0] if at_user else msg_owner, msg_content=msg_content,)
             return
-        # 如果 msg_content 符合 数字.多个数字 的格式
+        elif msg_content.startswith(("bb","BB","Bb", "bB", "报备")):
+            print(f"收到成员输入报备: {msg_content}")
+            add_bb_member.delay(group_wxid, member_wxid = msg_owner, msg_content=msg_content)
+            return
+        elif msg_content == "回":
+            print(f"收到成员输入回厅词: {msg_content}")
+            delete_bb_member.delay(group_wxid, member_wxid = msg_owner)
+            return
         elif msg_content in get_renwu_list(redis_conn, group_wxid) or msg_content.startswith(("买8", "买9")):
             print(f"收到成员输入对应任务: {msg_content}")
             if msg_content.startswith(("买8", "买9")):

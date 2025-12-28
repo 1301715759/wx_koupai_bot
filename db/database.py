@@ -51,7 +51,9 @@ class DatabaseManager:
                     bb_limit INTEGER DEFAULT 1,          --  设置报备人数上限
                     bb_in_hour INTEGER DEFAULT 2,        -- 设置一小时内的报备次数，默认2次
                     bb_timeout_desc TEXT DEFAULT '您已超时。', -- 设置超时提醒词
-                    bb_back_desc TEXT DEFAULT '回。', -- 设置回厅词
+                    bb_back_desc TEXT DEFAULT '欢迎回来。', -- 设置回厅词
+                    fixed_p_num INTEGER DEFAULT 0,         -- 设置固定手速排人数
+                    fixed_renwu_desc TEXT DEFAULT '',          -- 设置固定手速排可以打下来的任务
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime'))
                 )

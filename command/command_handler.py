@@ -6,8 +6,9 @@ from utils.send_utils import send_message, change_groupname
 from utils.send_utils_sync import get_member_nick
 from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time_slots, parse_at_message
 import json
+from celery_tasks.tasks_crud import get_renwu_list
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member
+from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member, check_koupai_member_limit
 from datetime import datetime, timedelta
 from cache.redis_pool import get_redis_connection
 
@@ -152,6 +153,14 @@ class CommandHandler:
                 "description": "设置报备回厅词+提示词",
                 "handler": self.handle_set_bb_back_desc
             },
+            "设置固定手速人数": {
+                "description": "设置固定手速人数+数字",
+                "handler": self.handle_set_fixed_num
+            },
+            "设置固定手速任务": {
+                "description": "设置固定手速排可以打下来的任务",
+                "handler": self.handle_set_fixed_renwu_desc
+            },
 
         }
     
@@ -183,7 +192,11 @@ class CommandHandler:
             return await self.handle_set_renwu_end_time(command, group_wxid)
         elif command.startswith("设置扣排人数"):
             return await self.handle_set_koupai_limit(command, group_wxid)
-        elif command.startswith("当前麦序") or command.startswith("查询麦序") or command.startswith("查询当前麦序"):
+        elif command.startswith("设置固定手速人数"):
+            return await self.handle_set_fixed_num(command, group_wxid)
+        elif command.startswith("设置固定手速任务"):
+            return await self.handle_set_fixed_renwu_desc(command, group_wxid)
+        elif command in ["当前麦序", "查询麦序", "查询当前麦序"]:
             return await self.handle_view_current_maixu(group_wxid)
         elif command == "取":
             return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
@@ -223,6 +236,7 @@ class CommandHandler:
             return await self.handle_set_bb_in_hour(command, group_wxid)
         elif command.startswith("设置报备回厅词"):
             return await self.handle_set_bb_back_desc(command, group_wxid)
+
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -408,70 +422,82 @@ class CommandHandler:
             return f"清空固定排成员 {msg_owner} 时出错 {e}"
     async def handle_view_fixed_koupai(self, group_wxid: str):
         """处理查看固定排命令"""
-        fixed_hosts = await group_repo.get_fixed_hosts(group_wxid)
-        print(f"固定排数据：{fixed_hosts}")
-        if fixed_hosts:
-            #fixed_hosts = '\r'.join([f"{slot[1]}-{slot[2]} {get_member_nick(group_wxid, slot[3])}" for slot in fixed_hosts])
-            #相同 start_hour 中的 wxid 合并到同一行（因为我们设置的end_hour都是start_hour+1），所以start_hour 和 end_hour是同一个不需要合并
-            fixed_hosts_dict = {}
-            for slot in fixed_hosts:
-                start_hour = slot[1]
-                if start_hour not in fixed_hosts_dict:
-                    fixed_hosts_dict[start_hour] = []
-                fixed_hosts_dict[start_hour].append(f" @{get_member_nick(group_wxid, slot[3])}")
-            fixed_hosts = [f"{start_hour}-{start_hour+1} {', '.join(nicks)}" for start_hour, nicks in fixed_hosts_dict.items()]
-            # 解析并构建固定排消息
-            fixed_hosts_message = '\r'.join(fixed_hosts)
-            await send_message(group_wxid, f"固定排名单：\r{fixed_hosts_message}")
-            return f"当前固定排：\r{fixed_hosts}"
-        else:
-            return "当前没有设置固定排"
+        try:
+            fixed_hosts = await group_repo.get_fixed_hosts(group_wxid)
+            print(f"固定排数据：{fixed_hosts}")
+            if fixed_hosts:
+                #fixed_hosts = '\r'.join([f"{slot[1]}-{slot[2]} {get_member_nick(group_wxid, slot[3])}" for slot in fixed_hosts])
+                #相同 start_hour 中的 wxid 合并到同一行（因为我们设置的end_hour都是start_hour+1），所以start_hour 和 end_hour是同一个不需要合并
+                fixed_hosts_dict = {}
+                for slot in fixed_hosts:
+                    start_hour = slot[1]
+                    if start_hour not in fixed_hosts_dict:
+                        fixed_hosts_dict[start_hour] = []
+                    fixed_hosts_dict[start_hour].append(f" @{get_member_nick(group_wxid, slot[3])}")
+                fixed_hosts = [f"{start_hour}-{start_hour+1} {', '.join(nicks)}" for start_hour, nicks in fixed_hosts_dict.items()]
+                # 解析并构建固定排消息
+                fixed_hosts_message = '\r'.join(fixed_hosts)
+                await send_message(group_wxid, f"固定排名单：\r{fixed_hosts_message}")
+                return f"当前固定排：\r{fixed_hosts}"
+            else:
+                return "当前没有设置固定排"
+        except Exception as e:
+            return f"查看固定排成员时出错 {e}"
 
     async def handle_view_host(self, group_wxid: str):
         """处理查看主持命令"""
-        hosts_schedules = await group_repo.get_group_hosts(group_wxid)
-        if hosts_schedules:
-            hosts_schedule = '\r'.join([f"{slot[2]}-{slot[3]} {slot[4]}" for slot in hosts_schedules])
-            await send_message(group_wxid, f"当前主持：\r{hosts_schedule}")
-            return f"当前主持：\r{hosts_schedule}"
-        else:
-            return "当前没有设置主持"
+        try:
+            hosts_schedules = await group_repo.get_group_hosts(group_wxid)
+            if hosts_schedules:
+                hosts_schedule = '\r'.join([f"{slot[2]}-{slot[3]} {slot[4]}" for slot in hosts_schedules])
+                await send_message(group_wxid, f"当前主持：\r{hosts_schedule}")
+                return f"当前主持：\r{hosts_schedule}"
+            else:
+                return "当前没有设置主持"
+        except Exception as e:
+            return f"查看主持成员时出错 {e}"
     async def handle_set_koupai_start_time(self, command: str, group_wxid: str):
         """设置扣排开始时间"""
-        start_time = re.search(r'设置扣排时间(.*)', command)
-        if not start_time:
-            return "命令格式错误，请使用：设置扣排时间20（分钟）"
-        start_time = start_time.group(1).strip()
-        if int(start_time) < 0 or int(start_time) > 59:
-            return "扣排开始时间必须在0-59分钟之间"
-        # 保存到数据库
-        await group_repo.update_group_start_koupai(group_wxid, int(start_time))
-        await initialize_tasks.update_groups_config(group_wxid, {"start_koupai": int(start_time)})
-        # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待1秒（不等待会出现诡异的情况）
-        # if datetime.now().second == 0:
-        #     await asyncio.sleep(1)
-        scheduled_task.delay(koupai_type="start", update_group=group_wxid)
-        await send_message(group_wxid, f"扣排开始时间已设置为：{start_time}分钟")
-        return f"扣排开始时间已设置为：{start_time}分钟"
+        try:
+            start_time = re.search(r'设置扣排时间(.*)', command)
+            if not start_time:
+                return "命令格式错误，请使用：设置扣排时间20（分钟）"
+            start_time = start_time.group(1).strip()
+            if int(start_time) < 0 or int(start_time) > 59:
+                return "扣排开始时间必须在0-59分钟之间"
+            # 保存到数据库
+            await group_repo.update_group_start_koupai(group_wxid, int(start_time))
+            await initialize_tasks.update_groups_config(group_wxid, {"start_koupai": int(start_time)})
+            # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待1秒（不等待会出现诡异的情况）
+            # if datetime.now().second == 0:
+            #     await asyncio.sleep(1)
+            scheduled_task.delay(koupai_type="start", update_group=group_wxid)
+            await send_message(group_wxid, f"扣排开始时间已设置为：{start_time}分钟")
+            return f"扣排开始时间已设置为：{start_time}分钟"
+        except Exception as e:
+            return f"设置扣排开始时间时出错 {e}"
     async def handle_set_koupai_end_time(self, command: str, group_wxid: str):
         """设置扣排截止时间"""
-        end_time = re.search(r'设置扣排截止时间(.*)', command)
-        if not end_time:
-            return "命令格式错误，请使用：设置扣排截止时间20（分钟）"
-        end_time = end_time.group(1).strip()
-        
-        if int(end_time) < 0 or int(end_time) > 60 :
-            return "扣排截止时间必须在0-59分钟之间"
-        # 保存到数据库
-        await group_repo.update_group_end_koupai(group_wxid, int(end_time))
-        await group_repo.update_group_end_task(group_wxid, int(end_time))
-        await initialize_tasks.update_groups_config(group_wxid, {"end_koupai": int(end_time), "end_renwu": int(end_time)})
-        # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待3秒（不等待会出现诡异的情况）
-        # if datetime.now().second == 0:
-        #     await asyncio.sleep(3)
-        scheduled_task.delay(koupai_type="end", update_group=group_wxid)
-        await send_message(group_wxid, f"扣排截止时间已设置为：{end_time}分钟")
-        return f"扣排截止时间已设置为：{end_time}分钟"
+        try:
+            end_time = re.search(r'设置扣排截止时间(.*)', command)
+            if not end_time:
+                return "命令格式错误，请使用：设置扣排截止时间20（分钟）"
+            end_time = end_time.group(1).strip()
+            
+            if int(end_time) < 0 or int(end_time) > 60 :
+                return "扣排截止时间必须在0-59分钟之间"
+            # 保存到数据库
+            await group_repo.update_group_end_koupai(group_wxid, int(end_time))
+            await group_repo.update_group_end_task(group_wxid, int(end_time))
+            await initialize_tasks.update_groups_config(group_wxid, {"end_koupai": int(end_time), "end_renwu": int(end_time)})
+            # 立即执行一次扣排任务查询，如果当前秒钟为0，则等待3秒（不等待会出现诡异的情况）
+            # if datetime.now().second == 0:
+            #     await asyncio.sleep(3)
+            scheduled_task.delay(koupai_type="end", update_group=group_wxid)
+            await send_message(group_wxid, f"扣排截止时间已设置为：{end_time}分钟")
+            return f"扣排截止时间已设置为：{end_time}分钟"
+        except Exception as e:
+            return f"设置扣排截止时间时出错 {e}"
 
     async def handle_set_renwu_end_time(self, command: str, group_wxid: str):
         """设置任务截止时间"""
@@ -504,7 +530,41 @@ class CommandHandler:
         await group_repo.update_group_limit_koupai(group_wxid, int(limit))
         await initialize_tasks.update_groups_config(group_wxid, {"limit_koupai": int(limit)})
         await send_message(group_wxid, f"扣排人数已设置为：{limit}人")
+        # 检查当前扣排人数是否超过了设置人数
+        check_koupai_member_limit.delay(group_wxid, int(limit))
         return f"扣排人数已设置为：{limit}人"
+    async def handle_set_fixed_num(self, command: str, group_wxid: str):
+        """设置固定手速排人数"""
+        fixed_num = re.search(r'设置固定手速人数(.*)', command)
+        if not fixed_num:
+            return "命令格式错误，请使用：设置固定手速排人数20（人）"
+        fixed_num = fixed_num.group(1).strip()
+        if int(fixed_num) < 0 or int(fixed_num) > 20:
+            return "固定手速排人数必须在0-20人之间"
+        # 保存到数据库
+        await group_repo.update_group_fixed_p_num(group_wxid, int(fixed_num))
+        await initialize_tasks.update_groups_config(group_wxid, {"fixed_p_num": int(fixed_num)})
+        await send_message(group_wxid, f"固定手速排人数已设置为：{fixed_num}人")
+        return f"固定手速排人数已设置为：{fixed_num}人"
+    async def handle_set_fixed_renwu_desc(self, command: str, group_wxid: str):
+        """设置固定手速排可以打下来的任务"""
+        fixed_renwu_desc = re.search(r'设置固定手速任务(.*)', command, re.S)
+        if not fixed_renwu_desc:
+            return "命令格式错误"
+        fixed_renwu_desc = fixed_renwu_desc.group(1).strip()
+        # 获取截取的任务描述是否在dict中
+        redis_conn = get_redis_connection()
+        renwu_desc_dict = get_renwu_list(redis_conn, group_wxid)
+        print(f"renwu_desc_dict: {renwu_desc_dict}")
+        # 当不在任务描述中时，设置为空字符串（即默认）
+        if fixed_renwu_desc not in renwu_desc_dict:
+            fixed_renwu_desc = ""
+            
+        # 保存到数据库
+        await group_repo.update_group_fixed_renwu_desc(group_wxid, fixed_renwu_desc)
+        await initialize_tasks.update_groups_config(group_wxid, {"fixed_renwu_desc": fixed_renwu_desc})
+        await send_message(group_wxid, f"固定手速排可以打下来的任务已设置为：{fixed_renwu_desc if fixed_renwu_desc else '默认'}")
+        return f"固定手速排可以打下来的任务已设置为：{fixed_renwu_desc}"
     async def handle_set_renwu(self, command: str, group_wxid: str):
         """设置任务描述"""
         if re.search(r'设置任务成功(.*)', command, re.S):
@@ -694,7 +754,7 @@ class CommandHandler:
             timeout_desc = timeout_desc.group(1).strip()
             
             await group_repo.update_group_timeout_desc(group_wxid, timeout_desc)
-            await initialize_tasks.update_groups_config(group_wxid, {"timeout_desc": timeout_desc})
+            await initialize_tasks.update_groups_config(group_wxid, {"bb_timeout_desc": timeout_desc})
             await send_message(group_wxid, f"报备超时提示词已设置为：{timeout_desc}")
         except Exception as e:
             return f"设置报备超时提示词失败：{e}"

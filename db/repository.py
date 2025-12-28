@@ -13,7 +13,7 @@ class GroupRepository:
     @staticmethod
     async def get_all_active_groups_info():
         """获取所有活跃群组信息"""
-        query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc, re_time, qu_time, p_qu, renwu_qu, bb_time, bb_limit, bb_in_hour, bb_timeout_desc, bb_back_desc FROM groups_config WHERE is_active = 1"
+        query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc, re_time, qu_time, p_qu, renwu_qu, bb_time, bb_limit, bb_in_hour, bb_timeout_desc, bb_back_desc, fixed_p_num, fixed_renwu_desc FROM groups_config WHERE is_active = 1"
         return await db_manager.execute_query(query)
     @staticmethod
     async def get_all_active_groups():
@@ -94,6 +94,16 @@ class GroupRepository:
         query = "UPDATE groups_config SET limit_koupai = ? WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (limit_koupai, group_wxid))
     @staticmethod
+    async def update_group_fixed_p_num(group_wxid: str, fixed_num: int):
+        """更新群组固定手速排人数"""
+        query = "UPDATE groups_config SET fixed_p_num = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (fixed_num, group_wxid))
+    @staticmethod
+    async def update_group_fixed_renwu_desc(group_wxid: str, fixed_renwu_desc: str):
+        """更新群组固定手速排可以打下来的任务"""
+        query = "UPDATE groups_config SET fixed_renwu_desc = ? WHERE group_wxid = ?"
+        return await db_manager.execute_update(query, (fixed_renwu_desc, group_wxid))
+    @staticmethod
     async def update_group_mode_koupai(group_wxid: str, verify_mode: str):
         """更新群组扣排模式"""
         query = "UPDATE groups_config SET verify_mode = ? WHERE group_wxid = ?"
@@ -149,7 +159,7 @@ class GroupRepository:
     @staticmethod
     async def update_group_timeout_desc(group_wxid: str, timeout_desc: str):
         """更新群组超时提醒词"""
-        query = "UPDATE groups_config SET timeout_desc = ? WHERE group_wxid = ?"
+        query = "UPDATE groups_config SET bb_timeout_desc = ? WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (timeout_desc, group_wxid))
     @staticmethod
     async def update_group_bb_back_desc(group_wxid: str, bb_back_desc: str):
