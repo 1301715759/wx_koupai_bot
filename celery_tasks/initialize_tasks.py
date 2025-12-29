@@ -85,7 +85,8 @@ class InitializeTasks:
                     "start_hour": host[1],
                     "host_desc": host[3],
                     "stage": host[4],
-                    
+                    "start_schedule": host[5],
+                    "end_schedule": host[6],
                     "fixed_hosts": json.dumps(fixed_wxid),
                 })
                 
@@ -133,11 +134,19 @@ class InitializeTasks:
                 "start_hour": host[2],
                 "host_desc": host[0],
                 "stage": host[1],
+                "start_schedule": host[4],
+                "end_schedule": host[5],
                 "fixed_hosts": json.dumps(fixed_wxid)
             })
         for host in formatted_hosts:
             self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{host['group_wxid']}:{host['start_hour']}", mapping=host)
         print(f"已添加群组 {group_wxid} 的所有任务")
+    async def update_group_tasks_host_desc(self, group_wxid:str, start_hour:str, end_hour:str, host_desc:str):
+        """更新指定群组指定时间范围的主持(临时，重启或者换天后会失效)"""
+        # 扫描所有符合前缀的 key
+        for hour in range(int(start_hour), int(end_hour)):
+            self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:{hour}", mapping={"host_desc": host_desc})
+        
     async def update_group_tasks_fixed_hosts(self, group_wxid: str):
         """更新指定群fixed_hosts"""
         # print(f"更新群组 {group_wxid} 的所有任务的fixed_hosts")

@@ -68,6 +68,8 @@ class DatabaseManager:
                     end_hour INTEGER NOT NULL,          -- 结束时间(0-23)
                     host_desc TEXT,                -- 主持别称
                     lianpai_desc BOOLEAN DEFAULT 0,  -- 是否连排
+                    start_schedule INTEGER,  -- 本场开始时间(0-23)
+                    end_schedule INTEGER,    -- 本场结束时间(0-24)
                     -- fixed_wxid TEXT DEFAULT '[]',        -- 固定主持人 暂时弃用改为额外表存储
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),

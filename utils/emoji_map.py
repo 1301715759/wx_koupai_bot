@@ -2,4 +2,5 @@
 emoji_map = {
     "full": "\\uD83C\\uDE35",
     "empty": "\\uD83C\\uDE33",
+    "schedule": "\\uD83D\\uDCC5"
 }

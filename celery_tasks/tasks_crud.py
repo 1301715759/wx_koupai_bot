@@ -32,15 +32,26 @@ def get_next_minute_group(redis_conn, groups_wxid: list, current_minute: int, fi
         if check_minute:
             valid_groups.append(group_wxid)
     return valid_groups
-
-def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8,  **kwargs):
-    """添加成员到有序集合，分数为当前时间戳。无论如何，不带base_score的分数始终低于带base_score"""
+def get_next_schedule_group(redis_conn, groups_wxid:list, current_hour:int) -> list:
+    """检查符合发送打卡记录表的群组"""
+    valid_groups = []
+    for group_wxid in groups_wxid:
+        last_hour = (current_hour - 1) % 24
+        key_last_hour = f"tasks:hosts_tasks_config:{group_wxid}:{last_hour}"
+        end_schedule = int(redis_conn.hget(key_last_hour, "end_schedule"))
+        # 如果从配置中读取到end_schedule为当前小时，则说明上场次结束，需要发送上场打卡记录表
+        if end_schedule%24 == current_hour:
+            valid_groups.append(group_wxid)
+    print(f"符合发送打卡记录表的群组: {valid_groups}")
+    return valid_groups
+def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8, mai_type:str = "", **kwargs) -> str:
+    """添加成员到有序集合，分数为当前时间戳。无论如何，不带base_score的分数始终低于带base_score，返回被挤出去的成员"""
     print(f"进入add_with_timestamp: {kwargs}")
     cureent_time = time.time()
     MAX_TIME = 4102444800  # 2100-01-01 的时间戳
     
     time_score = MAX_TIME - cureent_time
-    # 截取整数前四位，即时间咋10000秒内的排序
+    # 截取整数前四位，即时间10000秒内的排序
     minute_part = time_score%10000
     
     score = kwargs.get('extend_score', base_score + minute_part / 10000 )
@@ -54,10 +65,40 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
             redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", member)
     
     redis_conn.zadd(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", {f"{member_wxid}:{msg_content}": score})
-    if limit_koupai < redis_conn.zcard(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}"):
-        # 移除分数最低成员（即被挤出去的成员）
-        redis_conn.zremrangebyrank(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, 0)
-    print(f"add_with_timestamp: {kwargs} 成功")
+    # 当限制人数小于正分成员人数的时候，需要移除分数最低的正分成员（即被挤出去的成员）
+    # 当 mai_type 为空时，需要移除分数最低的正分成员（即被挤出去的成员）
+    if not mai_type:
+        print("===========测试===")
+        if limit_koupai < redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, float('inf')):
+            
+            positive_min_member = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, float('inf'), start=0, num=1)
+            print(f"negative_min_member: {negative_min_member}")
+            # 移除分数最低的正分成员（即被挤出去的成员）
+            if positive_min_member:
+                redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", positive_min_member[0])
+                # 返回被挤出去的成员
+                print(f"被挤出去的正分成员: {positive_min_member[0].split(':')[0]}")
+                return positive_min_member[0].split(":")[0]
+    
+    if mai_type == "mai8" or mai_type == "mai9":
+        # 当负分范围在-200~0 的成员数量 > 1时，移除分数最小的负分成员
+        # mai8 负分范围在-200~0
+        # mai9 负分范围在 -无穷~-500
+        print(f"mai_type: {mai_type}")
+        min_score = -200 if mai_type == "mai8" else float('-inf')
+        max_score = 0 if mai_type == "mai8" else -500
+        if redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", min_score, max_score) > 1:
+            negative_min_member = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", min=min_score, max=max_score, start=0, num=1)
+            print(f"negative_min_member: {negative_min_member}")
+
+            # 移除分数最小的负分成员（即被挤出去的成员）
+            if negative_min_member:
+                redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", negative_min_member[0])
+                # 返回被挤出去的成员
+                print(f"被挤出去的负分成员: {negative_min_member[0].split(':')[0]}")
+                return negative_min_member[0].split(":")[0]
+    return ""
+
     # time.sleep(0.0001)
 def delete_member(redis_conn, group_wxid: str, member_wxid: str, current_hour: int, limit_koupai: int = 8) -> int:
     """
@@ -71,8 +112,20 @@ def delete_member(redis_conn, group_wxid: str, member_wxid: str, current_hour: i
     for member in members:
         if member.startswith(f"{member_wxid}:"):
             redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{current_hour}", member)
-    # 返回空余成员数量
-    return limit_koupai - redis_conn.zcard(f"tasks:launch_tasks:{group_wxid}:{current_hour}")
+    # 返回空余正分成员数量
+    return limit_koupai - redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, float('inf'))
+def delete_members(redis_conn, group_wxid: str, current_hour: int, count: int = 1):
+    """
+    删除多个成员从有序集合(从最小的开始删除)
+    将删除的成员member后缀改为:作废
+    返回剩余成员数量
+    """
+    min_members = redis_conn.zrange(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, count-1, withscores=True)
+    # 将删除的成员member后缀改为:作废
+    for member, score in min_members:
+        redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{current_hour}", member)
+        redis_conn.zadd(f"tasks:launch_tasks:{group_wxid}:{current_hour}", {f"{member.split(':')[0]}:作废": score})
+    
 def get_group_config(redis_conn, group_wxid: str) -> dict:
     """获取群组的配置"""
     config = redis_conn.hgetall(f"groups_config:{group_wxid}")
@@ -85,10 +138,22 @@ def get_group_hosts_config(redis_conn, group_wxid: str, current_hour: int) -> di
     print(f"hosts config: {config}")
     return config
 
+def get_group_hosts_all(redis_conn, group_wxid: str) -> list:
+    """获取群组的所有扣排配置"""
+    hosts_all = []
+    # 先尝试获取该群所有key
+    for key in redis_conn.scan_iter(f"tasks:hosts_tasks_config:{group_wxid}:*"):
+        # 拼接start_hour,host_desc
+        start_hour = redis_conn.hget(key, "start_hour")
+        host_desc = redis_conn.hget(key, "host_desc")
+        hosts_all.append({"start_hour": start_hour, "host_desc": host_desc})
+    # 按start_hour排序
+    hosts_all.sort(key=lambda x: int(x["start_hour"]))
+    return hosts_all
 
-def get_group_task_members(redis_conn, group_wxid: str, current_hour: int, limit:int = 8) -> list:
+def get_group_task_members(redis_conn, group_wxid: str, current_hour: int) -> list:
     """获取群组的扣排麦序信息"""
-    members = redis_conn.zrevrange(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, limit-1, withscores=True)
+    members = redis_conn.zrevrange(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, -1, withscores=True)
     # [('wxid_dofg3jonqvre22:p', 0.2816195680141449), ('wxid_2tkacjo984zq22:p', 0.28242833766937253)]
     # 将成员id ‘wxid_dofg3jonqvre22:p’ 拆分成 wxid_dofg3jonqvre22 和 p 需要score
     tasks_members = [(member.split(':')[0], member.split(':')[1], score) for member, score in members]

@@ -1,8 +1,9 @@
+import requests
 import datetime
 import time
 import redis
 import re
-
+from celery_tasks.schedule_tasks import send_task_schedule, scheduled_task, delete_koupai_members
 now = datetime.datetime.now()
 current_minute = now.minute
 current_hour = now.hour
@@ -93,7 +94,12 @@ print(f"members: {list(members)}")
 # redis_conn.sadd(f"tasks:launch_tasks:tasks_list", "49484317759@chatroom:19")
 # redis_conn.srem(f"tasks:launch_tasks:renwu_tasks_list", "52069341938@chatroom:1")
 
-command = "设置手速不可"
-match = re.search(r'设置手速不可取(.*)', command)
-if match:
-    print(f"match: {match}")
+# command = "设置手速不可"
+# match = re.search(r'设置手速不可取(.*)', command)
+# if match:
+#     print(f"match: {match}")
+# redis_conn.zadd("tasks:launch_tasks:42973360766@chatroom:15", {"wxid_dofg3jonqvre22:10.0": 13})
+# send_task_schedule.delay("42973360766@chatroom", 17)
+current_minute = datetime.datetime.now().minute
+scheduled_task.delay(update_group="42973360766@chatroom", koupai_type="all", schedule_minute=current_minute)
+# delete_koupai_members.delay("42973360766@chatroom", 16, 1)

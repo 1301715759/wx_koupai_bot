@@ -6,9 +6,9 @@ from utils.send_utils import send_message, change_groupname
 from utils.send_utils_sync import get_member_nick
 from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time_slots, parse_at_message
 import json
-from celery_tasks.tasks_crud import get_renwu_list
+from celery_tasks.tasks_crud import get_renwu_list, get_group_hosts_all
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member, check_koupai_member_limit
+from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member, check_koupai_member_limit, delete_koupai_members
 from datetime import datetime, timedelta
 from cache.redis_pool import get_redis_connection
 
@@ -161,6 +161,18 @@ class CommandHandler:
                 "description": "设置固定手速排可以打下来的任务",
                 "handler": self.handle_set_fixed_renwu_desc
             },
+            "本档作废/上档作废": {
+                "description": "本档作废/上档作废",
+                "handler": self.handle_delete_koupai_members_all
+            },
+            "设置麦序作废人数": {
+                "description": "设置麦序作废人数+数字",
+                "handler": self.handle_delete_koupai_members
+            },
+            "换主持": {
+                "description": "换主持+开始时间-结束时间 例如：换主持10-15",
+                "handler": self.handle_transfer_host
+            }
 
         }
     
@@ -236,7 +248,12 @@ class CommandHandler:
             return await self.handle_set_bb_in_hour(command, group_wxid)
         elif command.startswith("设置报备回厅词"):
             return await self.handle_set_bb_back_desc(command, group_wxid)
-
+        elif command in ["本档作废", "上档作废"]:
+            return await self.handle_delete_koupai_members_all(command, group_wxid)
+        elif command.startswith("设置麦序作废人数"):
+            return await self.handle_delete_koupai_members(command, group_wxid)
+        elif command.startswith("换主持"):
+            return await self.handle_transfer_host(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -350,8 +367,8 @@ class CommandHandler:
         # 保存到数据库
         if parsed_slots:
             for slot in parsed_slots:
-                host_desc, lianpai_desc, start_hour, end_hour = slot
-                await group_repo.add_group_host(group_wxid, start_hour, end_hour, host_desc, lianpai_desc)
+                host_desc, lianpai_desc, start_hour, end_hour, schedule_start, schedule_end = slot
+                await group_repo.add_group_host(group_wxid, start_hour, end_hour, host_desc, lianpai_desc, schedule_start, schedule_end)
             # hosts_schedules = await group_repo.get_group_hosts(group_wxid)
             # hosts_schedule = '\r'.join([f"{slot[1]}-{slot[2]} {slot[3]}" for slot in hosts_schedules])
             await initialize_tasks.add_koupai_groups(group_wxid)
@@ -447,9 +464,9 @@ class CommandHandler:
     async def handle_view_host(self, group_wxid: str):
         """处理查看主持命令"""
         try:
-            hosts_schedules = await group_repo.get_group_hosts(group_wxid)
+            hosts_schedules = get_group_hosts_all(self.redis_conn, group_wxid)
             if hosts_schedules:
-                hosts_schedule = '\r'.join([f"{slot[2]}-{slot[3]} {slot[4]}" for slot in hosts_schedules])
+                hosts_schedule = '\r'.join([f"{slot['start_hour']}-{int(slot['start_hour'])+1} {slot['host_desc']}" for slot in hosts_schedules])
                 await send_message(group_wxid, f"当前主持：\r{hosts_schedule}")
                 return f"当前主持：\r{hosts_schedule}"
             else:
@@ -788,7 +805,57 @@ class CommandHandler:
             await send_message(group_wxid, f"报备回厅词已设置为：{bb_back_desc}")
         except Exception as e:
             return f"设置报备回厅词失败：{e}"
+    
 
+    async def handle_delete_koupai_members_all(self, command: str, group_wxid: str):
+        """处理删除所有麦序成员命令"""
+        try:
+            current_hour = datetime.now().hour
+            # 上档作废则为上一个小时的麦序
+            if command == "上档作废":
+                current_hour = current_hour - 1
+            delete_koupai_members.delay(group_wxid, current_hour)
+            await send_message(group_wxid, f"{current_hour}点的所有麦序已作废")
+        except Exception as e:
+            return f"删除所有麦序成员失败：{e}"
+    async def handle_delete_koupai_members(self, command: str, group_wxid: str):
+        """处理删除指定人数麦序成员命令"""
+        try:
+            # 格式为 设置麦序作废人数2（人）
+            delete_count = re.search(r'设置麦序作废人数(\d+)', command)
+            if not delete_count:
+                return "命令格式错误，请使用：设置麦序作废人数2（人）"
+            delete_count = delete_count.group(1).strip()
+            if int(delete_count) < 0 or int(delete_count) > 100:
+                return "作废人数必须在0-100人之间"
+            
+            current_hour = datetime.now().hour
+            delete_koupai_members.delay(group_wxid, current_hour, int(delete_count))
+            await send_message(group_wxid, f"{current_hour}点的{delete_count}人麦序已作废")
+        except Exception as e:
+            return f"删除指定人数麦序成员失败：{e}"
+    async def handle_transfer_host(self, command: str, group_wxid: str, msg_owner: str, at_user: list = []):
+        """处理换主持命令"""
+        try:
+            # 检查是否@了用户，如果at了用户说明是代换主持，否则是自己换主持
+            if at_user:
+                msg_owner = at_user[0]
+            # 格式为 换主持10-15
+            transfer_host = re.search(r'换主持(\d+)-(\d+)', command)
+            if not transfer_host:
+                return "命令格式错误，请使用：换主持10-15"
+            start_hour = transfer_host.group(1).strip()
+            end_hour = transfer_host.group(2).strip()
+            if int(start_hour) < 0 or int(start_hour) > 23 or int(end_hour) < 0 or int(end_hour) > 24:
+                return "时间范围必须在0-24之间"
+            if int(start_hour) >= int(end_hour):
+                return "开始时间必须早于结束时间"
+            # 更换临时主持
+            member_nick = get_member_nick(group_wxid, msg_owner)
+            await initialize_tasks.update_group_tasks_host_desc(group_wxid, start_hour, end_hour, member_nick)
+            await send_message(group_wxid, f"{start_hour}-{end_hour}主持已设置为：{member_nick}")
+        except Exception as e:
+            return f"换主持失败：{e}"
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

@@ -76,7 +76,7 @@ async def handle_event(event: dict):
     if event_type == "recvMsg" and  (group_wxid in enable_groups): 
         msg_owner = data.get("finalFromWxid", {})
         at_user = None
-        # 当存在@list的时候先尝试解析@list中的内容，并且修改msg_owner为@list中的第一个用户
+        # 当存在@list的时候先尝试解析@list中的内容
         if data.get("atWxidList", "") :
             at_user = data.get("atWxidList", "")
             msg_content = parse_at_message(msg_content)
@@ -88,7 +88,8 @@ async def handle_event(event: dict):
                                     "设置任务", "取", "补", "当前麦序", "查询麦序", "查询当前麦序", "转麦序", 
                                     "清空固定排", "查询固定排", "添加", "设置手速", "设置任务排",
                                     "设置报备时间", "设置报备人数", "设置固定手速",
-                                    "设置报备次数", "设置报备回厅词", "设置报备超时提示词")) or "固定排" in msg_content:
+                                    "设置报备次数", "设置报备回厅词", "设置报备超时提示词",
+                                    "设置麦序作废人数", "本档作废", "上档作废", "换主持")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)
             print(f"命令响应: {response}")
@@ -123,4 +124,4 @@ async def handle_event(event: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app='app:app', host="127.0.0.1", port=989, reload=True)
+    uvicorn.run(app='app:app', host="127.0.0.1", port=989, reload=True, reload_excludes=["test_tasks2.py"])

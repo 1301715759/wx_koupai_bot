@@ -114,13 +114,13 @@ class GroupRepository:
         query = "UPDATE groups_config SET renwu_desc = ? WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (new_renwu_desc, group_wxid))
     @staticmethod
-    async def add_group_host(group_wxid: str, start_hour: int, end_hour: int, host_desc: str, lianpai_desc: str = ""):
+    async def add_group_host(group_wxid: str, start_hour: int, end_hour: int, host_desc: str, lianpai_desc: str = "", start_schedule: int = 0, end_schedule: int = 0):
         """添加群组主持"""
         query = """
-        INSERT INTO host_schedule (group_wxid, start_hour, end_hour, host_desc, lianpai_desc)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO host_schedule (group_wxid, start_hour, end_hour, host_desc, lianpai_desc, start_schedule, end_schedule)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """
-        return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc)) 
+        return await db_manager.execute_update(query, (group_wxid, start_hour, end_hour, host_desc, lianpai_desc, start_schedule, end_schedule)) 
     @staticmethod
     async def update_group_re_time(group_wxid: str, re_time: int):
         """更新群组补位时间"""
@@ -227,7 +227,7 @@ class GroupRepository:
     @staticmethod
     async def get_all_hosts():
         """获取所有群组主持信息"""
-        query = "SELECT group_wxid, start_hour, end_hour, host_desc, lianpai_desc  FROM host_schedule ORDER BY group_wxid, start_hour"
+        query = "SELECT group_wxid, start_hour, end_hour, host_desc, lianpai_desc, start_schedule, end_schedule FROM host_schedule ORDER BY group_wxid, start_hour"
         return await db_manager.execute_query(query)
     @staticmethod
     async def get_all_fixed_hosts():
