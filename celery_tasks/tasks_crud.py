@@ -38,10 +38,11 @@ def get_next_schedule_group(redis_conn, groups_wxid:list, current_hour:int) -> l
     for group_wxid in groups_wxid:
         last_hour = (current_hour - 1) % 24
         key_last_hour = f"tasks:hosts_tasks_config:{group_wxid}:{last_hour}"
-        end_schedule = int(redis_conn.hget(key_last_hour, "end_schedule"))
+        end_schedule = redis_conn.hget(key_last_hour, "end_schedule")
         # 如果从配置中读取到end_schedule为当前小时，则说明上场次结束，需要发送上场打卡记录表
-        if end_schedule%24 == current_hour:
-            valid_groups.append(group_wxid)
+        if end_schedule:
+            if int(end_schedule) % 24 == current_hour:
+                valid_groups.append(group_wxid)
     print(f"符合发送打卡记录表的群组: {valid_groups}")
     return valid_groups
 def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8, mai_type:str = "", **kwargs) -> str:
@@ -83,9 +84,9 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
     if mai_type == "mai8" or mai_type == "mai9":
         # 当负分范围在-200~0 的成员数量 > 1时，移除分数最小的负分成员
         # mai8 负分范围在-200~0
-        # mai9 负分范围在 -无穷~-500
+        # mai9 负分范围在 -1000~-500
         print(f"mai_type: {mai_type}")
-        min_score = -200 if mai_type == "mai8" else float('-inf')
+        min_score = -200 if mai_type == "mai8" else -1000
         max_score = 0 if mai_type == "mai8" else -500
         if redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", min_score, max_score) > 1:
             negative_min_member = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", min=min_score, max=max_score, start=0, num=1)
@@ -116,15 +117,16 @@ def delete_member(redis_conn, group_wxid: str, member_wxid: str, current_hour: i
     return limit_koupai - redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, float('inf'))
 def delete_members(redis_conn, group_wxid: str, current_hour: int, count: int = 1):
     """
-    删除多个成员从有序集合(从最小的开始删除)
+    删除多个成员从有序集合(从最分数为-1000以上的开始删除，从小到大)
     将删除的成员member后缀改为:作废
     返回剩余成员数量
     """
-    min_members = redis_conn.zrange(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, count-1, withscores=True)
-    # 将删除的成员member后缀改为:作废
+    min_members = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{current_hour}", min=-1000, max=float('inf'), start=0, num=count, withscores=True)
+   
     for member, score in min_members:
+         # 将删除的成员member后缀拼接上:作废
         redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{current_hour}", member)
-        redis_conn.zadd(f"tasks:launch_tasks:{group_wxid}:{current_hour}", {f"{member.split(':')[0]}:作废": score})
+        redis_conn.zadd(f"tasks:launch_tasks:{group_wxid}:{current_hour}", {f"{member}:作废": score})
     
 def get_group_config(redis_conn, group_wxid: str) -> dict:
     """获取群组的配置"""
@@ -151,12 +153,27 @@ def get_group_hosts_all(redis_conn, group_wxid: str) -> list:
     hosts_all.sort(key=lambda x: int(x["start_hour"]))
     return hosts_all
 
-def get_group_task_members(redis_conn, group_wxid: str, current_hour: int) -> list:
-    """获取群组的扣排麦序信息"""
-    members = redis_conn.zrevrange(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, -1, withscores=True)
+def get_group_task_members(redis_conn, group_wxid: str, current_hour: int, with_daizou: bool = False) -> list:
+    """
+    获取群组的扣排麦序信息
+    with_daizou: 是否包含带走的成员
+    返回: 群组的扣排麦序信息列表，每个元素为 (成员id, 任务类型, 分数)
+    """
+    # 我们将带走的数值设置为-1000以下
+    min_score = -1000 if with_daizou else -1000
+    max_score = float('inf')
+    members = redis_conn.zrevrangebyscore(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", min=min_score, max=max_score, withscores=True)
     # [('wxid_dofg3jonqvre22:p', 0.2816195680141449), ('wxid_2tkacjo984zq22:p', 0.28242833766937253)]
-    # 将成员id ‘wxid_dofg3jonqvre22:p’ 拆分成 wxid_dofg3jonqvre22 和 p 需要score
-    tasks_members = [(member.split(':')[0], member.split(':')[1], score) for member, score in members]
+    # 将成员id wxid_dofg3jonqvre22:p:带走 (wxid_dofg3jonqvre22 p score state)
+    #         wxid_dofg3jonqvre22:p      (wxid_dofg3jonqvre22 p score '')
+    tasks_members = [
+            (
+                member.split(':')[0],
+                member.split(':')[1], 
+                score,
+                member.split(':')[2] if len(member.split(':')) > 2 else ''
+            ) for member, score in members
+        ]
     
     print(f"tasks_members: {tasks_members}")
     return tasks_members

@@ -105,6 +105,8 @@ class DatabaseManager:
                     member_wxid TEXT NOT NULL,             -- 群成员ID
                     roles TEXT DEFAULT 'member',             -- 群成员身份 （默认成员member，管理员admin，群主owner）
                     is_baned BOOLEAN DEFAULT 0,             -- 是否被封禁
+                    accumulate_score REAL DEFAULT 0.0,             -- 累计未完成任务分数
+                    complete_score REAL DEFAULT 0.0,             -- 累计完成任务分数
                     created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
                     FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,

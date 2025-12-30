@@ -11,8 +11,11 @@ class GroupRepository:
         query = "SELECT * FROM groups_config ORDER BY created_at DESC"
         return await db_manager.execute_query(query)
     @staticmethod
-    async def get_all_active_groups_info():
-        """获取所有活跃群组信息"""
+    async def get_all_active_groups_info(group_wxid: str = None):
+        """获取所有活跃群组信息。如果存在传入的group_wxid，则只返回该群组的信息"""
+        if group_wxid:
+            query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc, re_time, qu_time, p_qu, renwu_qu, bb_time, bb_limit, bb_in_hour, bb_timeout_desc, bb_back_desc, fixed_p_num, fixed_renwu_desc FROM groups_config WHERE is_active = 1 AND group_wxid = ?"
+            return await db_manager.execute_single_query(query, (group_wxid,))
         query = "SELECT group_wxid, start_koupai, end_koupai, end_renwu, limit_koupai, verify_mode, maixu_desc, welcome_msg, exit_msg, renwu_desc, re_time, qu_time, p_qu, renwu_qu, bb_time, bb_limit, bb_in_hour, bb_timeout_desc, bb_back_desc, fixed_p_num, fixed_renwu_desc FROM groups_config WHERE is_active = 1"
         return await db_manager.execute_query(query)
     @staticmethod
@@ -167,6 +170,17 @@ class GroupRepository:
         query = "UPDATE groups_config SET bb_back_desc = ? WHERE group_wxid = ?"
         return await db_manager.execute_update(query, (bb_back_desc, group_wxid))
     @staticmethod
+    async def update_group_member_is_baned(group_wxid: str, member_wxid: str, is_baned: bool):
+        """更新群组成员是否被ban(如果不存在该成员则插入)"""
+        query = """
+        INSERT INTO group_members_roles (group_wxid, member_wxid, is_baned)
+        VALUES (?, ?, ?)
+        ON CONFLICT(group_wxid, member_wxid) DO UPDATE SET
+            is_baned = excluded.is_baned,
+            updated_at = datetime(CURRENT_TIMESTAMP, 'localtime')
+        """
+        return await db_manager.execute_update(query, (group_wxid, member_wxid, is_baned))
+    @staticmethod
     async def add_group_member_benefits(group_wxid: str, member_wxid: str, card: str, num: int, expire_at: str = '9999-12-31 23:59:59'):
         """添加群组成员权益卡片"""
         # 添加的时候应当检查是否存在相同的记录
@@ -225,14 +239,29 @@ class GroupRepository:
         query = "SELECT group_wxid, start_hour, end_hour, fixed_wxid FROM fixed_host_schedule WHERE group_wxid = ? ORDER BY start_hour"
         return await db_manager.execute_query(query, (group_wxid,))
     @staticmethod
-    async def get_all_hosts():
-        """获取所有群组主持信息"""
+    async def get_all_hosts(group_wxid: str = None):
+        """获取所有群组主持信息。如果存在传入的group_wxid，则只返回该群组的信息"""
+        if group_wxid:
+            query = "SELECT group_wxid, start_hour, end_hour, host_desc, lianpai_desc, start_schedule, end_schedule FROM host_schedule WHERE group_wxid = ? ORDER BY start_hour"
+            return await db_manager.execute_query(query, (group_wxid,))
         query = "SELECT group_wxid, start_hour, end_hour, host_desc, lianpai_desc, start_schedule, end_schedule FROM host_schedule ORDER BY group_wxid, start_hour"
         return await db_manager.execute_query(query)
     @staticmethod
-    async def get_all_fixed_hosts():
-        """获取所有群组固定排成员信息"""
+    async def get_all_fixed_hosts(group_wxid: str = None):
+        """获取所有群组固定排成员信息。如果存在传入的group_wxid，则只返回该群组的信息"""
+        if group_wxid:
+            query = "SELECT group_wxid, start_hour, end_hour, fixed_wxid FROM fixed_host_schedule WHERE group_wxid = ? ORDER BY start_hour"
+            return await db_manager.execute_query(query, (group_wxid,))
         query = "SELECT group_wxid, start_hour, end_hour, fixed_wxid FROM fixed_host_schedule ORDER BY group_wxid, start_hour"
+        return await db_manager.execute_query(query)
+    @staticmethod
+    async def get_all_group_member_baned():
+        """获取所有群组被禁排成员信息"""
+        query = """
+        SELECT group_wxid, member_wxid, is_baned FROM group_members_roles 
+        WHERE is_baned = 1
+        ORDER BY group_wxid, member_wxid
+        """
         return await db_manager.execute_query(query)
 class CommandRepository:
     """命令记录数据访问类"""

@@ -11,7 +11,7 @@ from celery_tasks.initialize_tasks import initialize_tasks
 from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member, check_koupai_member_limit, delete_koupai_members
 from datetime import datetime, timedelta
 from cache.redis_pool import get_redis_connection
-
+from common.global_vars import *
 class CommandHandler:
     """命令处理器，处理各种用户命令"""
 
@@ -172,7 +172,16 @@ class CommandHandler:
             "换主持": {
                 "description": "换主持+开始时间-结束时间 例如：换主持10-15",
                 "handler": self.handle_transfer_host
-            }
+            },
+            "禁排": {
+                "description": "禁排@多个用户",
+                "handler": self.handle_ban_member
+            },
+            "取消禁排": {
+                "description": "取消禁排@多个用户",
+                "handler": self.handle_unban_member
+            },
+
 
         }
     
@@ -254,6 +263,10 @@ class CommandHandler:
             return await self.handle_delete_koupai_members(command, group_wxid)
         elif command.startswith("换主持"):
             return await self.handle_transfer_host(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif command == "禁排":
+            return await self.handle_ban_member(command, group_wxid, kwargs.get("at_user"))
+        elif command == "取消禁排":
+            return await self.handle_unban_member(command, group_wxid, kwargs.get("at_user"))
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -856,6 +869,40 @@ class CommandHandler:
             await send_message(group_wxid, f"{start_hour}-{end_hour}主持已设置为：{member_nick}")
         except Exception as e:
             return f"换主持失败：{e}"
+    async def handle_ban_member(self, command: str, group_wxid: str, at_user: list = []):
+        """处理禁排成员命令"""
+        try:
+            if command != "禁排":
+                return "命令格式错误，请使用：禁排"
+            # 检查是否@了用户
+            if not at_user:
+                return "命令格式错误，请@要禁排的成员"
+            members_wxid = at_user
+            members_desc = ""
+            for member_wxid in members_wxid:
+                await group_repo.update_group_member_is_baned(group_wxid, member_wxid, is_baned=True)
+                add_baned_member(group_wxid, member_wxid)
+                members_desc += f"{get_member_nick(group_wxid, member_wxid)} "
+            await send_message(group_wxid, f"{members_desc}已被禁排")
+        except Exception as e:
+            return f"禁排成员失败：{e}"
+    async def handle_unban_member(self, command: str, group_wxid: str, at_user: list = []):
+        """处理取消禁排成员命令"""
+        try:
+            if command != "取消禁排":
+                return "命令格式错误，请使用：取消禁排"
+            # 检查是否@了用户
+            if not at_user:
+                return "命令格式错误，请@要取消禁排的成员"
+            members_wxid = at_user
+            members_desc = ""
+            for member_wxid in members_wxid:
+                await group_repo.update_group_member_is_baned(group_wxid, member_wxid, is_baned=False)
+                remove_baned_member(group_wxid, member_wxid)
+                members_desc += f"{get_member_nick(group_wxid, member_wxid)} "
+            await send_message(group_wxid, f"{members_desc}已被取消禁排")
+        except Exception as e:
+            return f"取消禁排成员失败：{e}"
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

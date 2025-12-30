@@ -27,16 +27,16 @@ class InitializeTasks:
         self.GROUPS_CONFIG_KEY = "groups_config"
         self.HOSTS_TASK_CONFIG_KEY = "tasks:hosts_tasks_config"
         logger.info(f"初始化任务类{__class__.__name__}")
-    async def load_from_database(self):
-        """从数据库加载所有组配置和主机信息"""
+    async def load_from_database(self, groups_wxid: str = None):
+        """从数据库加载所有组配置和主机信息。如果存在传入的groups_wxid，则只返回该群组的信息"""
         try:
             # 加载所有组配置
-            groups_configs = await group_repo.get_all_active_groups_info()
+            groups_configs = await group_repo.get_all_active_groups_info(groups_wxid)
             print(f"从数据库加载的组配置: {groups_configs}")
             # 加载所有主持信息
-            hosts_schedules = await group_repo.get_all_hosts()
+            hosts_schedules = await group_repo.get_all_hosts(groups_wxid)
             # 加载所有固定排成员信息
-            fixed_hosts_schedules = await group_repo.get_all_fixed_hosts()
+            fixed_hosts_schedules = await group_repo.get_all_fixed_hosts(groups_wxid)
             print(f"从数据库加载的固定排成员信息: {fixed_hosts_schedules}")
             # print(f"从数据库加载的组配置: {groups_configs}")
             # groups_configs 
