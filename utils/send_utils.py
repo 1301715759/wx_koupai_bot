@@ -17,7 +17,7 @@ async def send_request(wxid, request_type, data):
     """
     发送请求到微信服务器的通用函数。
     """
-    url = "http://127.0.0.1:8888/wechat/httpapi"
+    url = "http://127.0.0.1:28888/wechat/httpapi"
 
     payload = json.dumps({
         "type": request_type,

@@ -129,11 +129,38 @@ class DatabaseManager:
                     UNIQUE(group_wxid, member_wxid, card)  -- 复合唯一约束
                 )
                 ''')
-                # 手动添加约束，因为数据表我们已经创建
-                await db.execute("""
-                    CREATE UNIQUE INDEX IF NOT EXISTS uk_group_member_card 
-                    ON group_members_benefits(group_wxid, member_wxid, card)
-                """)
+                # 创建群成员扣排记录表
+                await db.execute('''
+                CREATE TABLE IF NOT EXISTS group_members_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_wxid TEXT NOT NULL,             -- 群ID
+                    member_wxid TEXT NOT NULL,             -- 群成员ID
+                    koupai_type TEXT DEFAULT '',             -- 扣排类型
+                    state TEXT DEFAULT '',             -- 状态
+                    task_time_hour INTEGER DEFAULT 0,             -- 任务时间(0-23)
+                    task_time_date TEXT DEFAULT '',             -- 任务时间日期，格式为YYYY-MM-DD
+                    created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
+                    UNIQUE(group_wxid, member_wxid, koupai_type, task_time_hour, task_time_date)  -- 复合唯一约束
+                )
+                ''')
+                # 创建报备记录表
+                await db.execute('''
+                CREATE TABLE IF NOT EXISTS group_members_bb (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    group_wxid TEXT NOT NULL,             -- 群ID
+                    member_wxid TEXT NOT NULL,             -- 群成员ID
+                    msg_content TEXT DEFAULT '',             -- 报备消息内容
+                    create_time TIMESTAMP DEFAULT '',             -- 创建时间
+                    back_time TIMESTAMP DEFAULT '',             -- 返回时间
+                    is_timeout BOOLEAN DEFAULT 0,             -- 是否准时返回
+                    created_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    updated_at TIMESTAMP DEFAULT (datetime(CURRENT_TIMESTAMP, 'localtime')),
+                    FOREIGN KEY (group_wxid) REFERENCES groups_config (group_wxid) ON DELETE CASCADE,
+                    UNIQUE(group_wxid, member_wxid, create_time)  -- 复合唯一约束
+                )
+                ''')
 
                 # 创建更新时间的触发器
                 await db.execute('''
@@ -242,21 +269,16 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"更新操作失败: {query}, 参数: {params}, 错误: {e}")
             raise
-    
-    async def add_group(self, group_wxid: str) -> bool:
-        """添加群组信息"""
+    async def execute_many(self, query: str, params_list: list):
+        """执行批量更新操作"""
         try:
             async with self.get_connection() as conn:
-                await conn.execute(
-                    "INSERT OR IGNORE INTO groups_config (group_wxid) VALUES (?)",
-                    (group_wxid)
-                )
+                await conn.executemany(query, params_list)
                 await conn.commit()
-                logger.info(f"群组添加成功: {group_wxid}")
-                return True
+                logger.info(f"批量更新操作成功，影响行数: {len(params_list)}")
         except Exception as e:
-            logger.error(f"添加群组时出错: {e}")
-            return False
+            logger.error(f"批量更新操作失败: {query}, 参数列表: {params_list}, 错误: {e}")
+            raise
     
     async def record_command(self, group_wxid: str, command: str) -> bool:
         """记录命令执行历史"""

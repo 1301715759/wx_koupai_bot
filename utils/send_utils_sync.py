@@ -55,7 +55,7 @@ def send_request(wxid, request_type, data):
         request_type: 请求类型，例如 "sendText"
         data: 请求数据，包含必要的参数
     """
-    url = "http://127.0.0.1:8888/wechat/httpapi"
+    url = "http://127.0.0.1:28888/wechat/httpapi"
 
     payload = json.dumps({
         "type": request_type,

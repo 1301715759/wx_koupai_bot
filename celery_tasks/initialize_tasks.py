@@ -26,6 +26,7 @@ class InitializeTasks:
         self.db_manager = db_manager
         self.GROUPS_CONFIG_KEY = "groups_config"
         self.HOSTS_TASK_CONFIG_KEY = "tasks:hosts_tasks_config"
+        self.MEMBER_TASK_KEY = "member_task"
         logger.info(f"初始化任务类{__class__.__name__}")
     async def load_from_database(self, groups_wxid: str = None):
         """从数据库加载所有组配置和主机信息。如果存在传入的groups_wxid，则只返回该群组的信息"""
@@ -37,6 +38,8 @@ class InitializeTasks:
             hosts_schedules = await group_repo.get_all_hosts(groups_wxid)
             # 加载所有固定排成员信息
             fixed_hosts_schedules = await group_repo.get_all_fixed_hosts(groups_wxid)
+            # 加载所有群组成员角色信息
+            group_members_roles = await group_repo.get_all_group_members_roles(groups_wxid)
             print(f"从数据库加载的固定排成员信息: {fixed_hosts_schedules}")
             # print(f"从数据库加载的组配置: {groups_configs}")
             # groups_configs 
@@ -91,7 +94,16 @@ class InitializeTasks:
                 })
                 
             tasks_groups = [host["group_wxid"] for host in formatted_hosts]
-            logger.info(f"格式化后的任务群组: {tasks_groups}")
+            # logger.info(f"格式化后的任务群组: {tasks_groups}")
+            # 格式化群组成员角色信息
+            formatted_members_roles = []
+            for role in group_members_roles:
+                formatted_members_roles.append({
+                    "group_wxid": role[0],
+                    "member_wxid": role[1],
+                    "accumulate_score": role[4] or 0,
+                    "complete_score": role[5] or 0,
+                })
             # print(f"格式化后的组配置: {formatted_hosts}")
             for task in formatted_configs:
                 self.redis_client.hset(f"{self.GROUPS_CONFIG_KEY}:{task['group_wxid']}", mapping=task)
@@ -100,7 +112,9 @@ class InitializeTasks:
             # 存储任务群组到集合
             for group_wxid in tasks_groups:
                 self.redis_client.sadd(f"{self.GROUPS_CONFIG_KEY}:koupai_groups", group_wxid)
-
+            # 存储群组成员角色信息。
+            for role in formatted_members_roles:
+                self.redis_client.hset(f"{self.MEMBER_TASK_KEY}:{role['group_wxid']}:{role['member_wxid']}", mapping=role)
             # 初始化完redis存储后，立即执行检查任务到任务列表是否存在
             scheduled_task.delay()
         except Exception as e:

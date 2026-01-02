@@ -1,6 +1,8 @@
 import time
 import redis
 from datetime import datetime, timedelta
+from db.repository import group_repo
+import asyncio
 def get_next_hour_group(redis_conn, groups_wxid: list, current_hour: int) -> list:
     """检查符合下一个小时扣排任务的群组"""
     valid_groups = []
@@ -69,7 +71,7 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
     # 当限制人数小于正分成员人数的时候，需要移除分数最低的正分成员（即被挤出去的成员）
     # 当 mai_type 为空时，需要移除分数最低的正分成员（即被挤出去的成员）
     if not mai_type:
-        print("===========测试===")
+        
         if limit_koupai < redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, float('inf')):
             
             positive_min_member = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, float('inf'), start=0, num=1)
@@ -81,7 +83,7 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
                 print(f"被挤出去的正分成员: {positive_min_member[0].split(':')[0]}")
                 return positive_min_member[0].split(":")[0]
     
-    if mai_type == "mai8" or mai_type == "mai9":
+    if mai_type == "p8 " or mai_type == "p9 ":
         # 当负分范围在-200~0 的成员数量 > 1时，移除分数最小的负分成员
         # mai8 负分范围在-200~0
         # mai9 负分范围在 -1000~-500
@@ -153,31 +155,116 @@ def get_group_hosts_all(redis_conn, group_wxid: str) -> list:
     hosts_all.sort(key=lambda x: int(x["start_hour"]))
     return hosts_all
 
-def get_group_task_members(redis_conn, group_wxid: str, current_hour: int, with_daizou: bool = False) -> list:
+def get_group_task_members(redis_conn, group_wxid: str, current_hour: int, end_hour: int = None, with_daizou: bool = False, date: str = None) -> list:
     """
     获取群组的扣排麦序信息
     with_daizou: 是否包含带走的成员
-    返回: 群组的扣排麦序信息列表，每个元素为 (成员id, 任务类型, 分数)
+    返回: 群组的扣排麦序信息列表，每个元素为 (成员id, 任务类型, 分数, 状态)
     """
     # 我们将带走的数值设置为-1000以下
-    min_score = -1000 if with_daizou else -1000
+    min_score = -2000 if with_daizou else -1000
     max_score = float('inf')
-    members = redis_conn.zrevrangebyscore(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", min=min_score, max=max_score, withscores=True)
-    # [('wxid_dofg3jonqvre22:p', 0.2816195680141449), ('wxid_2tkacjo984zq22:p', 0.28242833766937253)]
-    # 将成员id wxid_dofg3jonqvre22:p:带走 (wxid_dofg3jonqvre22 p score state)
-    #         wxid_dofg3jonqvre22:p      (wxid_dofg3jonqvre22 p score '')
-    tasks_members = [
-            (
-                member.split(':')[0],
-                member.split(':')[1], 
-                score,
-                member.split(':')[2] if len(member.split(':')) > 2 else ''
-            ) for member, score in members
-        ]
+    members = []
     
-    print(f"tasks_members: {tasks_members}")
+    key = f"tasks:launch_tasks:{group_wxid}"
+    if date not in ["", None]:
+        key = f"history:tasks:{group_wxid}:{date}"
+    print(f"key: {key}")
+    tasks_members = []
+    for hour in range((current_hour+1)%24, end_hour if end_hour != None else (current_hour+1)%24 + 1):
+        print(f"hour: {hour}")
+        tasks = redis_conn.zrevrangebyscore(f"{key}:{hour}", min=min_score, max=max_score, withscores=True)
+        # [('wxid_dofg3jonqvre22:p', 0.2816195680141449), ('wxid_2tkacjo984zq22:p', 0.28242833766937253)]
+        # 将成员id wxid_dofg3jonqvre22:p:带走 (wxid_dofg3jonqvre22, p, score, state, hour)
+        #         wxid_dofg3jonqvre22:p      (wxid_dofg3jonqvre22, p, score, '', hour)
+        tasks_members.extend(
+                (
+                    member.split(':')[0],
+                    member.split(':')[1], 
+                    score,
+                    member.split(':')[2] if len(member.split(':')) > 2 else '',
+                    hour,
+                    date,
+                    group_wxid
+                ) for member, score in tasks
+            )
+    
     return tasks_members
+def generate_task_members(group_tasks_members: list, with_zuofei: bool = False) -> dict:
+    """
+    生成群组的扣排麦序信息字典
+    with_zuofei: 是否包含作废场次的信息
+    返回: 群组的扣排麦序信息字典，例子：{成员id: [扣排列表]}
+    """
+    # 生成字典，key为成员id，value为扣排列表
+    tasks_members_dict = {}
+    for member, koupai_type, score, state, _, _, _ in group_tasks_members:
+        # 排除作废场次的信息
+        if not with_zuofei and state == "作废":
+            continue
+        if member not in tasks_members_dict:
+            tasks_members_dict[member] = []
+        
+        tasks_members_dict[member].append((koupai_type, score, state, ))
+    
+    return tasks_members_dict
+def get_member_task(redis_conn, group_wxid: str) -> dict:
+    """获取群组的成员任务累积"""
+    task = {}
 
+    for key in redis_conn.scan_iter(f"member_task:{group_wxid}:*"):
+        accumulate_score = redis_conn.hget(key, "accumulate_score")
+        complete_score = redis_conn.hget(key, "complete_score")
+        print(f"accumulate_score: {accumulate_score}, complete_score: {complete_score}")
+        task[key.split(':')[-1]] = {"accumulate_score": float(accumulate_score), "complete_score": float(complete_score)}
+    return task
+def update_group_member_task(redis_conn, group_wxid: str, group_tasks_members: list):
+    """更新群组的成员任务累积"""
+    # 从redis中获取成员的任务累积
+
+    member_tasks = get_member_task(redis_conn, group_wxid)
+    # 遍历 group_tasks_members list，将成员的扣排类型转尝试化为float，如果转化成功则追加到member_tasks[member_wxid]["accumulate_score"]
+    # 如果转化失败则忽略
+    # 如果成员不在member_tasks中，则初始化。如果state为作废，则不初始化并且不追加。如果为带走或者过，则追加complete_score
+    print(f"更新前member_tasks===: {member_tasks}")
+    for member_wxid, koupai_type, _, state, _, _, _ in group_tasks_members:
+        if member_wxid not in member_tasks and state != "作废":
+            member_tasks[member_wxid] = {"accumulate_score": 0, "complete_score": 0}
+        try:
+            # 当koupai_type为p8或p9时，需要特殊处理（移除掉p8或p9）
+            if koupai_type.startswith("p8") or koupai_type.startswith("p9"):
+                koupai_type = koupai_type.replace("p8", "").replace("p9", "")
+            float(koupai_type)
+            if state != "作废":
+                member_tasks[member_wxid]["accumulate_score"] += float(koupai_type)
+            if state in ["带走", "过"]:
+                member_tasks[member_wxid]["complete_score"] += float(koupai_type)
+        except ValueError:
+            pass
+
+    # 更新redis中的成员任务累积
+    print(f"更新后的member_tasks===: {member_tasks}")
+    for member_wxid, task_info in member_tasks.items():
+        update_member_task(redis_conn, group_wxid, member_wxid, task_info["accumulate_score"], task_info["complete_score"])
+def update_member_task(redis_conn, group_wxid: str, member_wxid: str, accumulate_score: float = None, complete_score: float = None):
+    """更新群组的成员任务累积"""
+    if accumulate_score is None:
+        accumulate_score = float(redis_conn.hget(f"member_task:{group_wxid}:{member_wxid}", "accumulate_score"))
+    if complete_score is None:
+        complete_score = float(redis_conn.hget(f"member_task:{group_wxid}:{member_wxid}", "complete_score"))
+    # 当分数小于0时，设置为0
+    if accumulate_score < 0:
+        accumulate_score = 0
+    if complete_score < 0:
+        complete_score = 0
+    redis_conn.hset(f"member_task:{group_wxid}:{member_wxid}", mapping={
+        "group_wxid": group_wxid,
+        "member_wxid": member_wxid,
+        "accumulate_score": accumulate_score,
+        "complete_score": complete_score
+    })
+    # 同时更新sqlite数据库里的数据累积
+    asyncio.run(group_repo.update_group_member_score(group_wxid, member_wxid, accumulate_score, complete_score))
 def get_renwu_list(redis_conn, group_wxid: str) -> list:
     """获取群组的任务列表"""
     rules = redis_conn.hget(f"groups_config:{group_wxid}", "renwu_desc")
@@ -207,6 +294,15 @@ def check_koupai_limit(redis_conn, group_wxid: str, current_hour: int) -> bool:
     limit = int(get_group_config(redis_conn, group_wxid).get("limit_koupai", 8))
     return redis_conn.zcard(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}") >= limit
 
+def copy_to_history_task(redis_conn, group_wxid: str, date: str):
+    """复制指定群组的所有扣排记录到历史记录里"""
+    # 复制到历史记录里
+    current_date = date
+    group_keys = redis_conn.scan_iter(f"tasks:launch_tasks:{group_wxid}:*")
+    for key in group_keys:
+        # 复制到历史记录里
+        redis_conn.copy(key, f"history:tasks:{group_wxid}:{current_date}:{key.split(':')[-1]}", replace=True)
+
 
 
 redis_conn = redis.Redis(host='127.0.0.1', port=6379, db=0, decode_responses=True)
@@ -214,3 +310,4 @@ redis_conn = redis.Redis(host='127.0.0.1', port=6379, db=0, decode_responses=Tru
 # get_renwu_rule(redis_conn, "42973360766@chatroom")
 # print(get_renwu_list(redis_conn, "42973360766@chatroom"))
 # print(get_renwu_dict(get_renwu_list(redis_conn, "42973360766@chatroom")))
+

@@ -8,7 +8,9 @@ from command.rules.hostPhrase_rules import validate_time_slots_array, parse_time
 import json
 from celery_tasks.tasks_crud import get_renwu_list, get_group_hosts_all
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import scheduled_task, delete_koupai_member, add_koupai_member, get_current_maixu, transfer_koupai_member, check_koupai_member_limit, delete_koupai_members
+from celery_tasks.schedule_tasks import (scheduled_task, delete_koupai_member, add_koupai_member, 
+                                        get_current_maixu, transfer_koupai_member, check_koupai_member_limit, 
+                                        delete_koupai_members, send_task_schedule_day)
 from datetime import datetime, timedelta
 from cache.redis_pool import get_redis_connection
 from common.global_vars import *
@@ -181,6 +183,22 @@ class CommandHandler:
                 "description": "取消禁排@多个用户",
                 "handler": self.handle_unban_member
             },
+            "今日麦序/昨日麦序": {
+                "description": "今日麦序+开始时间-结束时间 例如：今日麦序10-15",
+                "handler": self.handle_send_task_schedule_day
+            },
+            "累计任务": {
+                "description": "累计任务",
+                "handler": self.handle_view_member_task
+            },
+            "累计过": {
+                "description": "累计过的任务",
+                "handler": self.handle_view_member_task
+            },
+            "添加累计": {
+                "description": "添加累计+@多个用户+数字",
+                "handler": self.handle_add_score
+            }
 
 
         }
@@ -243,6 +261,8 @@ class CommandHandler:
             return await self.handle_remove_fixed_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif "固定排" in command:
             return await self.handle_set_fixed_koupai(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
+        elif command.startswith("添加累计"):
+            return await self.handle_add_score(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif "添加管理" in command:
             return 
         elif command.startswith("添加"):
@@ -267,6 +287,10 @@ class CommandHandler:
             return await self.handle_ban_member(command, group_wxid, kwargs.get("at_user"))
         elif command == "取消禁排":
             return await self.handle_unban_member(command, group_wxid, kwargs.get("at_user"))
+        elif command.startswith(("今日麦序", "昨日麦序")):
+            return await self.handle_send_task_schedule_day(command, group_wxid)
+        elif command in ["累计任务", "累计过"] :
+            return await self.handle_view_member_task(command, group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         else:
             return "未注册命令，请输入 /help 查看帮助信息"
     async def handle_event(self, event_type: str, group_wxid: str):
@@ -903,6 +927,111 @@ class CommandHandler:
             await send_message(group_wxid, f"{members_desc}已被取消禁排")
         except Exception as e:
             return f"取消禁排成员失败：{e}"
+    async def handle_send_task_schedule_day(self, command: str, group_wxid: str):
+        """处理发送今日/昨日麦序记录命令"""
+        try:
+            # 格式为 今日麦序10-15  10-15为可选内容，不填入或者不符合规范则是全部时间
+            schedule_time = re.search(r'(今日|昨日|本月|本周)麦序(\d+)-(\d+)', command)
+            if command.startswith("今日麦序"):
+                schedule_type = "今日"
+            elif command.startswith("昨日麦序"):
+                schedule_type = "昨日"
+            elif command.startswith("本月麦序"):
+                schedule_type = "本月"
+            elif command.startswith("本周麦序"):
+                schedule_type = "本周"
+            date = None if schedule_type == "今日" else (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+            if schedule_time:
+                start_hour = schedule_time.group(2).strip()
+                end_hour = schedule_time.group(3).strip()
+                if int(start_hour) < 0 or int(start_hour) > 23 or int(end_hour) < 0 or int(end_hour) > 24:
+                    return "时间范围必须在0-24之间"
+                if int(start_hour) >= int(end_hour):
+                    return "开始时间必须早于结束时间"
+                send_task_schedule_day.delay(group_wxid, int(start_hour), int(end_hour), date=date)
+            else:
+                send_task_schedule_day.delay(group_wxid, None, None, date=date)
+            return "今日麦序记录已发送"
+        except Exception as e:
+            return f"发送今日麦序记录失败：{e}"
+    async def handle_view_member_task(self, command: str, group_wxid: str, msg_owner: str, at_user: list = []):
+        """查看成员累计任务"""
+        try:
+            if command == "累计任务":
+                task_type = "accumulate_score"
+            elif command == "累计过":
+                task_type = "complete_score"
+            else:
+                return 
+            if at_user:
+                members_wxid = at_user[0]
+            else:
+                members_wxid = msg_owner
+            # 获取成员任务
+            member_role = await group_repo.get_all_group_members_roles(group_wxid, members_wxid)
+            # 更新redis里的分数
+            self.redis_conn.set(f"member_task:{group_wxid}:{members_wxid}", mapping={
+                "group_wxid": group_wxid,
+                "member_wxid": members_wxid,
+                "accumulate_score": member_role[4],
+                "complete_score": member_role[5],
+            })
+            print(member_role)
+            if task_type == "accumulate_score":
+                score = member_role[4]
+            elif task_type == "complete_score":
+                score = member_role[5]
+            await send_message(group_wxid, f"{get_member_nick(group_wxid, members_wxid)}的{command}为：{score}")
+        except Exception as e:
+            return f"查看成员任务失败：{e}"
+    async def handle_add_score(self, command: str, group_wxid: str, msg_owner: str, at_user: list = []):
+        """添加累计任务"""
+        try:
+            # 添加(累计|过)+数字（包含正负值）
+            if at_user:
+                msg_owner = at_user[0]
+            if command.startswith("添加累计过"):
+                task_type = "complete_score"
+                #去除添加累计
+                command = command.replace("添加累计过", "")
+            elif command.startswith("添加累计任务"):
+                task_type = "accumulate_score"
+                #去除添加累计任务
+                command = command.replace("添加累计任务", "")
+            else:
+                return 
+            if at_user:
+                members_wxid = at_user[0]
+            else:
+                members_wxid = msg_owner
+            #尝试强制转化为float
+            try:
+                score = float(command.strip())
+            except ValueError:
+                return
+            # 获取成员任务
+            member_role = await group_repo.get_all_group_members_roles(group_wxid, members_wxid)
+            print(member_role)
+            if task_type == "accumulate_score":
+                old_accumulate_score = member_role[4]
+                await group_repo.update_group_member_score(group_wxid, members_wxid, accumulate_score=score+old_accumulate_score)
+            elif task_type == "complete_score":
+                old_complete_score = member_role[5]
+                await group_repo.update_group_member_score(group_wxid, members_wxid, complete_score=score+old_complete_score)
+            # 重新获取更新后的分数
+            member_role = await group_repo.get_all_group_members_roles(group_wxid, members_wxid)
+            # 更新redis里的分数
+            self.redis_conn.hset(f"member_task:{group_wxid}:{members_wxid}", mapping={
+                "group_wxid": group_wxid,
+                "member_wxid": members_wxid,
+                "accumulate_score": member_role[4],
+                "complete_score": member_role[5],
+            })
+            # 发送更新后的分数
+            await send_message(group_wxid, f"{get_member_nick(group_wxid, members_wxid)}的累计任务为：{member_role[4]}，累计过为{member_role[5]}")
+            
+        except Exception as e:
+            return f"添加累计任务失败：{e}"
     async def handle_info_command(self, group_wxid: str):
         """处理信息命令"""
         group_info = await group_repo.get_group_by_wxid(group_wxid)

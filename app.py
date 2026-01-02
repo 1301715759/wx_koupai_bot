@@ -10,6 +10,7 @@ from utils.send_utils import send_message
 from celery_tasks.initialize_tasks import initialize_tasks
 from celery_tasks.schedule_tasks import add_koupai_member, update_koupai_member, add_mai89_member, add_bb_member, delete_bb_member, add_daizou_member
 from celery_tasks.tasks_crud import get_renwu_list
+from celery_app import cleanup_expired_results
 from cache.redis_pool import get_redis_connection
 import re
 from command.rules.hostPhrase_rules import parse_at_message
@@ -34,6 +35,8 @@ async def lifespan(app: FastAPI):
     await initialize_tasks.clear_all_tasks()
     # 初始化任务
     await initialize_tasks.load_from_database()
+    # 清理过期任务结果
+    cleanup_expired_results.delay()
     
     # 设置全局变量enable_groups
     set_enable_groups([group[0] for group in await group_repo.get_all_active_groups()])
@@ -96,7 +99,8 @@ async def handle_event(event: dict):
                                     "清空固定排", "查询固定排", "添加", "设置手速", "设置任务排",
                                     "设置报备时间", "设置报备人数", "设置固定手速",
                                     "设置报备次数", "设置报备回厅词", "设置报备超时提示词",
-                                    "设置麦序作废人数", "本档作废", "上档作废", "换主持", "禁排", "取消禁排")) or "固定排" in msg_content:
+                                    "设置麦序作废人数", "本档作废", "上档作废", "换主持", "禁排", "取消禁排",
+                                    "今日麦序", "昨日麦序", "累计任务", "累计过")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)
             print(f"命令响应: {response}")
@@ -154,3 +158,4 @@ def remove_baned_member(group_wxid: str, member_wxid: str):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app='app:app', host="127.0.0.1", port=989, reload=True, reload_excludes=["test_tasks2.py"])
+

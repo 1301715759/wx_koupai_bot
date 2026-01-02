@@ -1,9 +1,15 @@
 import requests
+import aiohttp
 import datetime
 import time
 import redis
 import re
-from celery_tasks.schedule_tasks import send_task_schedule, scheduled_task, delete_koupai_members
+import asyncio
+import platform
+from db.repository import group_repo
+from celery_tasks.schedule_tasks import (send_task_schedule, scheduled_task, 
+                                        delete_koupai_members, send_task_schedule_day,
+                                        save_task_schedule_day_history)
 now = datetime.datetime.now()
 current_minute = now.minute
 current_hour = now.hour
@@ -103,3 +109,92 @@ print(f"members: {list(members)}")
 current_minute = datetime.datetime.now().minute
 scheduled_task.delay(update_group="42973360766@chatroom", koupai_type="all", schedule_minute=current_minute)
 # delete_koupai_members.delay("42973360766@chatroom", 16, 1)
+# send_task_schedule_day.delay("42973360766@chatroom", date="2025-12-31")
+
+# 模拟request post同时异步发送了十条不同成员发的post请求，每个请求的参数不同
+"""
+{
+    "type": "recvMsg",
+    "des": "收到消息",
+    "data": {
+        "timeStamp": "1767119446100",
+        "fromType": 2,
+        "msgType": 1,
+        "msgSource": 0,
+        "fromWxid": "42973360766@chatroom",
+        "finalFromWxid": "wxid_2tkacjo984zq22",
+        "atWxidList": [],
+        "silence": 1,
+        "membercount": 3,
+        "signature": "N0_V1_sMM6sefm|v1_6pSJrYFv",
+        "msg": "p",
+        "msgId": "8274637004044835273",
+        "sendId": "",
+        "msgXml": ""
+    },
+    "timestamp": "1767119447052",
+    "wxid": "wxid_dofg3jonqvre22",
+    "port": 8888,
+    "pid": 3940,
+    "flag": "7888"
+}
+
+"""
+async def post_data_async(url, data):
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=data) as response:
+            return await response.json()
+    # 端口为989， /wechat/callback 接收post请求
+# Windows 下需要显式设置 SelectorEventLoop，否则 aiodns 会报错
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+# 并发发送 10 条请求
+async def send_all():
+    tasks = []
+    for i in range(10):
+        member_wxid = f"wxid_{i}"
+        await asyncio.sleep(0.01*i)
+        print(f"member_wxid: {member_wxid}")
+        data = {
+            "type": "recvMsg",
+            "des": "收到消息",
+            "data": {
+                "timeStamp": "1767119446100",
+                "fromType": 2,
+                "msgType": 1,
+                "msgSource": 0,
+                "fromWxid": "42973360766@chatroom",
+                "finalFromWxid": member_wxid,
+                "atWxidList": [],
+                "silence": 1,
+                "membercount": 3,
+                "signature": "N0_V1_sMM6sefm|v1_6pSJrYFv",
+                "msg": "p",
+                "msgId": "8274637004044835273",
+                "sendId": "",
+                "msgXml": ""
+            },
+            "timestamp": "1767119447052",
+            "wxid": "wxid_dofg3jonqvre22",
+            "port": 8888,
+            "pid": 3940,
+            "flag": "7888"
+        }
+        tasks.append(post_data_async("http://localhost:989/wechat/callback", data))
+    await asyncio.gather(*tasks)
+
+# 运行协程
+# asyncio.run(send_all())
+
+# date = datetime.datetime.now().strftime("%Y:%m:%d")
+# group_keys = redis_conn.smembers("groups_config:koupai_groups")
+# # print(f"info: {redis_conn.info()}")
+# for group_key in group_keys:
+#     print(f"group_key: {group_key}")
+#     # 复制tasks:launch_tasks:{group_wxid}:*到history:tasks:{group_wxid}:{date}下
+#     # redis是扁平存储，因此不能一次性复制所有key，需要遍历所有key
+#     for key in redis_conn.scan_iter(f"tasks:launch_tasks:{group_key}:*"):
+#         redis_conn.copy(key, f"history:tasks:{group_key}:{date}:{key.split(':')[-1]}", replace=True)
+# scheduled_task.delay(save_history = True)
+
