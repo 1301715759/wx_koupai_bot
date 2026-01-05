@@ -50,6 +50,7 @@ def get_next_schedule_group(redis_conn, groups_wxid:list, current_hour:int) -> l
 def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:float = 0, msg_content: str = "", limit_koupai: int = 8, mai_type:str = "", **kwargs) -> str:
     """添加成员到有序集合，分数为当前时间戳。无论如何，不带base_score的分数始终低于带base_score，返回被挤出去的成员"""
     print(f"进入add_with_timestamp: {kwargs}")
+    current_date = datetime.now().strftime("%Y-%m-%d")
     cureent_time = time.time()
     MAX_TIME = 4102444800  # 2100-01-01 的时间戳
     
@@ -57,46 +58,48 @@ def add_with_timestamp(redis_conn, group_wxid: str, member_wxid:str, base_score:
     # 截取整数前四位，即时间10000秒内的排序
     minute_part = time_score%10000
     
-    score = kwargs.get('extend_score', base_score + minute_part / 10000 )
+    score = kwargs.get('extend_score', base_score + minute_part / 10000 ) if msg_content != "固定手速" else base_score
+    # key
+    task_key = f"tasks:launch_tasks:{current_date}:{group_wxid}:{kwargs.get('current_hour', '')}"
     # 先尝试移除对应的成员（带p）
-    redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", f"{member_wxid}:p")
+    #  redis_conn.zrem(task_key, f"{member_wxid}:p")
     # 获取限制人数内的成员，因为会有在范围内重复打榜的可能
-    members = redis_conn.zrange(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, limit_koupai-1)
+    members = redis_conn.zrange(task_key, 0, limit_koupai-1)
     # 移除 member_wxid:*的成员
     for member in members:
         if member.startswith(f"{member_wxid}:"):
-            redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", member)
+            redis_conn.zrem(task_key, member)
     
-    redis_conn.zadd(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", {f"{member_wxid}:{msg_content}": score})
+    redis_conn.zadd(task_key, {f"{member_wxid}:{msg_content}": score})    
     # 当限制人数小于正分成员人数的时候，需要移除分数最低的正分成员（即被挤出去的成员）
     # 当 mai_type 为空时，需要移除分数最低的正分成员（即被挤出去的成员）
     if not mai_type:
         
-        if limit_koupai < redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, float('inf')):
+        if limit_koupai < redis_conn.zcount(task_key, 0, float('inf')):
             
-            positive_min_member = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", 0, float('inf'), start=0, num=1)
-            print(f"negative_min_member: {negative_min_member}")
+            positive_min_member = redis_conn.zrangebyscore(task_key, 0, float('inf'), start=0, num=1) 
+            print(f"positive_min_member: {positive_min_member}")
             # 移除分数最低的正分成员（即被挤出去的成员）
             if positive_min_member:
-                redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", positive_min_member[0])
+                redis_conn.zrem(task_key, positive_min_member[0])
                 # 返回被挤出去的成员
                 print(f"被挤出去的正分成员: {positive_min_member[0].split(':')[0]}")
                 return positive_min_member[0].split(":")[0]
     
-    if mai_type == "p8 " or mai_type == "p9 ":
+    if mai_type == "p8" or mai_type == "p9":
         # 当负分范围在-200~0 的成员数量 > 1时，移除分数最小的负分成员
         # mai8 负分范围在-200~0
         # mai9 负分范围在 -1000~-500
         print(f"mai_type: {mai_type}")
-        min_score = -200 if mai_type == "mai8" else -1000
-        max_score = 0 if mai_type == "mai8" else -500
-        if redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", min_score, max_score) > 1:
-            negative_min_member = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", min=min_score, max=max_score, start=0, num=1)
+        min_score = -200 if mai_type == "p8" else -1000
+        max_score = 0 if mai_type == "p8" else -500
+        if redis_conn.zcount(task_key, min_score, max_score) > 1:
+            negative_min_member = redis_conn.zrangebyscore(task_key, min=min_score, max=max_score, start=0, num=1)
             print(f"negative_min_member: {negative_min_member}")
 
             # 移除分数最小的负分成员（即被挤出去的成员）
             if negative_min_member:
-                redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{kwargs.get('current_hour', '')}", negative_min_member[0])
+                redis_conn.zrem(task_key, negative_min_member[0])
                 # 返回被挤出去的成员
                 print(f"被挤出去的负分成员: {negative_min_member[0].split(':')[0]}")
                 return negative_min_member[0].split(":")[0]
@@ -110,26 +113,57 @@ def delete_member(redis_conn, group_wxid: str, member_wxid: str, current_hour: i
     """
     # 先尝试获得所有成员
     print(f"delete_member: [{member_wxid}]")
-    members = redis_conn.zrange(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, limit_koupai-1)
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    key = f"tasks:launch_tasks:{current_date}:{group_wxid}:{current_hour}"
+    members = redis_conn.zrange(key, 0, limit_koupai-1)
     # 删除所有包含 member_wxid 的成员
     for member in members:
         if member.startswith(f"{member_wxid}:"):
-            redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{current_hour}", member)
+            redis_conn.zrem(key, member)
     # 返回空余正分成员数量
-    return limit_koupai - redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{current_hour}", 0, float('inf'))
-def delete_members(redis_conn, group_wxid: str, current_hour: int, count: int = 1):
+    return limit_koupai - redis_conn.zcount(key, 0, float('inf'))
+def delete_members(redis_conn, group_wxid: str, current_hour: int, count: int = 1, current_date: str = None):
     """
     删除多个成员从有序集合(从最分数为-1000以上的开始删除，从小到大)
     将删除的成员member后缀改为:作废
     返回剩余成员数量
     """
-    min_members = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{current_hour}", min=-1000, max=float('inf'), start=0, num=count, withscores=True)
-   
+    # 如果没有指定日期，默认使用当前日期
+    if not current_date:
+        current_date = datetime.now().strftime("%Y-%m-%d")
+
+    key = f"tasks:launch_tasks:{current_date}:{group_wxid}:{current_hour}"
+    print(f"key: {key}")
+
+    min_members = redis_conn.zrangebyscore(key, min=-1000, max=float('inf'), start=0, num=count, withscores=True)
+    print(f"min_members: {min_members}")
     for member, score in min_members:
-         # 将删除的成员member后缀拼接上:作废
-        redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{current_hour}", member)
-        redis_conn.zadd(f"tasks:launch_tasks:{group_wxid}:{current_hour}", {f"{member}:作废": score})
-    
+        member_wxid = member.split(":")[0]
+        # 提取koupai_type和state
+        koupai_type = member.split(":")[1]
+        state = member.split(":")[2] if len(member.split(":")) > 2 else ""
+        # 如果是作废则跳过这个成员
+        if state == "作废":
+            continue
+        # 当存在p8或者p9时候(p8 1.0这种)，移除p8 p9前缀
+        if koupai_type.startswith(("p8", "p9")):
+            koupai_type_score = koupai_type.replace("p8", "").replace("p9", "")
+        print(f"koupai_type_score: {koupai_type_score}")
+        # 将删除的成员member后的state改为:作废
+        redis_conn.zrem(key, member)
+        redis_conn.zadd(key, {f"{member_wxid}:{koupai_type}:作废": score})
+        # 尝试把koupai_type_score转化为float，失败则保持原字符串
+        try:
+            koupai_type_score = float(koupai_type_score)
+            # 从累记任务中减少该分数
+            curren_accumulate_score = redis_conn.hget(f"member_task:{group_wxid}:{member_wxid}", "accumulate_score")
+            update_member_task(redis_conn, group_wxid, member_wxid, accumulate_score=float(curren_accumulate_score)-koupai_type_score)
+            if state == "过":
+                # 从已完成任务中减少该分数
+                curren_complete_score = redis_conn.hget(f"member_task:{group_wxid}:{member_wxid}", "complete_score")
+                update_member_task(redis_conn, group_wxid, member_wxid, complete_score=float(curren_complete_score)-koupai_type_score)
+        except ValueError:
+            pass
 def get_group_config(redis_conn, group_wxid: str) -> dict:
     """获取群组的配置"""
     config = redis_conn.hgetall(f"groups_config:{group_wxid}")
@@ -161,12 +195,14 @@ def get_group_task_members(redis_conn, group_wxid: str, current_hour: int, end_h
     with_daizou: 是否包含带走的成员
     返回: 群组的扣排麦序信息列表，每个元素为 (成员id, 任务类型, 分数, 状态)
     """
+    # 当end_hour为24时，使用前一天日期，否则使用当前日期（一般出现end_hour的时候为 发送打卡记录表才会使用。当end_hour为24时，一般是发送前一天指定时间段的打卡记录）
+    current_date = datetime.now().strftime("%Y-%m-%d") if end_hour != 24 else (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d")
     # 我们将带走的数值设置为-1000以下
     min_score = -2000 if with_daizou else -1000
     max_score = float('inf')
     members = []
     
-    key = f"tasks:launch_tasks:{group_wxid}"
+    key = f"tasks:launch_tasks:{current_date}:{group_wxid}"
     if date not in ["", None]:
         key = f"history:tasks:{group_wxid}:{date}"
     print(f"key: {key}")

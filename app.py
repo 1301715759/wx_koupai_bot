@@ -8,7 +8,9 @@ from db.repository import group_repo
 from utils.send_utils_sync import at_user, get_member_nick
 from utils.send_utils import send_message
 from celery_tasks.initialize_tasks import initialize_tasks
-from celery_tasks.schedule_tasks import add_koupai_member, update_koupai_member, add_mai89_member, add_bb_member, delete_bb_member, add_daizou_member
+from celery_tasks.schedule_tasks import (add_koupai_member, update_koupai_member, 
+                        add_mai89_member, add_bb_member, delete_bb_member, add_daizou_member,
+                        scheduled_task)
 from celery_tasks.tasks_crud import get_renwu_list
 from celery_app import cleanup_expired_results
 from cache.redis_pool import get_redis_connection
@@ -35,6 +37,9 @@ async def lifespan(app: FastAPI):
     await initialize_tasks.clear_all_tasks()
     # 初始化任务
     await initialize_tasks.load_from_database()
+    # 初始化任务后，立即执行检查任务到任务列表是否存在
+    scheduled_task.delay()
+    
     # 清理过期任务结果
     cleanup_expired_results.delay()
     

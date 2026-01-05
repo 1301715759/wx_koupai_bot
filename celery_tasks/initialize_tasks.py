@@ -13,7 +13,8 @@ from db.database import db_manager
 from db.repository import group_repo, command_repo
 from cache.redis_pool import get_redis_connection
 import asyncio
-from celery_tasks.schedule_tasks import scheduled_task
+# 防止循环导入
+# from celery_tasks.schedule_tasks import scheduled_task
 
 
 
@@ -116,7 +117,7 @@ class InitializeTasks:
             for role in formatted_members_roles:
                 self.redis_client.hset(f"{self.MEMBER_TASK_KEY}:{role['group_wxid']}:{role['member_wxid']}", mapping=role)
             # 初始化完redis存储后，立即执行检查任务到任务列表是否存在
-            scheduled_task.delay()
+            # scheduled_task.delay()
         except Exception as e:
             print(f"从数据库加载组配置失败: {e}")
     

@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 import logging
 from cache.redis_pool import get_redis_connection
 from celery_tasks.tasks_crud import *
+from celery_tasks.initialize_tasks import initialize_tasks
 import json
 from contextlib import contextmanager
 import asyncio
@@ -132,6 +133,17 @@ def scheduled_task( koupai_type: str = "all", update_group:str = None, **kwargs)
         valid_groups_end = []
         valid_groups_end_renwu = []
         valid_groups_schedule = []
+
+        # 每日0点执行重新初始化所有任务
+        if current_hour == 0 and current_minute == 0 or kwargs.get("init_tasks"):
+            asyncio.run(initialize_tasks.load_from_database())
+
+        # 每日0点59分执行 
+        if current_hour == 0 and current_minute == 59 or kwargs.get("save_history"):
+            # 存储今日麦序记录到历史记录
+            # 并且清空redis内的launch_tasks缓存
+            save_task_schedule_day_history.delay(cleanup=True)
+
         # 保证互斥
         if koupai_type != "end":
             valid_groups_start = get_next_minute_group(redis_conn, valid_groups, current_minute, "start_koupai") 
@@ -142,12 +154,8 @@ def scheduled_task( koupai_type: str = "all", update_group:str = None, **kwargs)
         if koupai_type == "all" and (kwargs.get("schedule_minute") or current_minute == 1):
             valid_groups_schedule = get_next_schedule_group(redis_conn, groups_keys, current_hour)
             print(f"valid_groups_schedule 符合发送打卡记录表的群组: {valid_groups_schedule}")
-        # 每日0点59分执行
-        if current_hour == 0 and current_minute == 59 or kwargs.get("save_history"):
-            # 存储今日麦序记录到历史记录
-            # 并且清空redis内的launch_tasks缓存
-            save_task_schedule_day_history.delay()
-        
+
+
         task_group = process_valid_groups(current_hour, valid_groups_start=valid_groups_start, valid_groups_end=valid_groups_end, valid_groups_end_renwu=valid_groups_end_renwu, valid_groups_schedule=valid_groups_schedule)
         launch_time = now.replace(minute=current_minute, second=0, microsecond=0)
         print(f"下一分钟到了就开始执行扣排任务: {launch_time}")
@@ -180,7 +188,7 @@ def send_koupai_task_start(group_wxid: str, current_hour: int):
         # 先往扣排队列里添加固定排成员
         for fixed_host in fixed_hosts:
             # 因为固定排成员在最前面，因此基础分数设为1000
-            add_with_timestamp(redis_conn, group_wxid, f"{fixed_host}",msg_content=="固定排", base_score=1000, current_hour=(current_hour+1)%24)
+            add_with_timestamp(redis_conn, group_wxid, f"{fixed_host}",msg_content="固定排", base_score=1000, current_hour=(current_hour+1)%24)
         
         now_date = datetime.now().strftime('%m-%d')
         send_message(group_wxid, f"主持: {hsot_desc}\r"
@@ -197,7 +205,7 @@ def send_koupai_task_end(group_wxid: str, current_hour: int, task_type: str = "e
     发送指定群组的结束扣排信息。
     """
     try:
-        print(f"===发送结束扣排任务到群组{group_wxid}==={task_type}===")
+        
         redis_conn = get_redis_connection(0)
         #获取群扣排相关信息
         group_config = get_group_config(redis_conn, group_wxid)
@@ -287,11 +295,17 @@ def add_koupai_member(group_wxid: str, member_wxid: str, msg_content: str = "p",
                     # 如果有固定手速排任务， 那么base_score为 字典中对应的分数
                     if fixed_renwu_desc != "":
                         base_score = get_renwu_dict(get_renwu_list(redis_conn, group_wxid)).get(fixed_renwu_desc, 0)
-            koupai_type = "手速" if msg_content != "补" else "补"
+            if msg_content == "补":
+                koupai_type = "补"
+            elif msg_content == "固定手速":
+                koupai_type = "固定手速"
+            else:
+                koupai_type = "手速"
             add_with_timestamp(redis_conn, group_wxid, f"{member_wxid}", msg_content=koupai_type, current_hour = (current_hour+1)%24, base_score = base_score)
 
             # 获取正分的成员（因为负分为买89，不参与扣排人数限制）
-            current_members = redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, float('inf'))
+            current_date = datetime.now().strftime("%Y-%m-%d")
+            current_members = redis_conn.zcount(f"tasks:launch_tasks:{current_date}:{group_wxid}:{(current_hour+1)%24}", 0, float('inf'))
             # return f"成员{member_wxid}已添加到扣排任务列表{group_wxid}"
             # 当采用 手速 扣排达到人数上限的时候，删除扣排阶段队列，添加任务阶段队列
             if current_members >= member_limit:
@@ -365,6 +379,11 @@ def add_mai89_member(group_wxid: str, member_wxid: str, msg_content: str, **kwar
         current_hour = datetime.now().hour
         has_renwu = redis_conn.sismember(f"tasks:launch_tasks:renwu_tasks_list", f"{group_wxid}:{(current_hour+1)%24}")
         if has_renwu:
+            # 当成员已经在task_members中时，不允许重复添加
+            tasks_members = get_group_task_members(redis_conn, group_wxid, current_hour)
+            if any(member == member_wxid for member, _, _, _, _, _, _ in tasks_members):
+                send_message(group_wxid, f"{get_member_nick(group_wxid, member_wxid)} 已经在扣排任务列表中")
+                return
             part = msg_content.replace("买8", "").strip() if msg_content.startswith("买8") else msg_content.replace("买9", "").strip()
             base_score = get_renwu_dict(get_renwu_list(redis_conn, group_wxid)).get(part, 0)
             if base_score == 0:
@@ -450,7 +469,7 @@ def delete_koupai_member(group_wxid: str, member_wxid: str, **kwargs):
         if not member_type:
             send_message(group_wxid, f"{get_member_nick(group_wxid, member_wxid)} 不在扣牌列表中")
             return
-        if member_type in ['p', 'P', '排'] and p_qu == 0:
+        if member_type in ['p', 'P', '排', "手速"] and p_qu == 0:
             send_message(group_wxid, f"群已设置手速不可取")
             return
         if member_type in group_config.get("renwu_desc", []) and renwu_qu == 0:
@@ -492,7 +511,7 @@ def delete_koupai_member(group_wxid: str, member_wxid: str, **kwargs):
     except Exception as e:
         logger.error(f"删除成员{member_wxid}从扣牌任务列表{group_wxid}时出错: {e}")
 @celery_app.task
-def delete_koupai_members(group_wxid: str, current_hour: int, delete_count: str = "all", **kwargs):
+def delete_koupai_members(group_wxid: str, current_hour: int, delete_count: str = "all", current_date: str = None, **kwargs):
     """
     从扣牌列表中删除指定数量的群组成员。
     消息内容一般为 设置麦序作废人数/本档作废/上档作废 的时候触发
@@ -501,7 +520,7 @@ def delete_koupai_members(group_wxid: str, current_hour: int, delete_count: str 
         redis_conn = get_redis_connection(0)
         if delete_count == "all":
             delete_count = 0
-        delete_members(redis_conn, group_wxid, current_hour, delete_count)
+        delete_members(redis_conn, group_wxid, current_hour, delete_count, current_date)
     except Exception as e:
         logger.error(f"从扣牌列表中删除指定数量的群组成员时出错: {e}")
 @celery_app.task
@@ -536,16 +555,18 @@ def check_koupai_member_limit(group_wxid: str, limit_koupai: int):
     """
     redis_conn = get_redis_connection(0)
     current_hour = datetime.now().hour
+    current_date = datetime.now().strftime("%Y-%m-%d")
     # 获取群配置
     group_config = get_group_config(redis_conn, group_wxid)
+    key = f"tasks:launch_tasks:{group_wxid}:{current_hour}:{current_date}"
     # 获取正分扣排人数
-    koupai_count = redis_conn.zcount(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, float('inf'))
+    koupai_count = redis_conn.zcount(key, 0, float('inf'))
     if koupai_count > limit_koupai:
         print(f"当前扣排人数: {koupai_count}, 限制人数: {limit_koupai}")
         # 获取分数最小的正分扣排人员
-        postive_min_members = redis_conn.zrangebyscore(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", 0, float('inf'), start=0, num=koupai_count - limit_koupai)
+        postive_min_members = redis_conn.zrangebyscore(key, 0, float('inf'), start=0, num=koupai_count - limit_koupai)
         # 删除这些人员
-        redis_conn.zrem(f"tasks:launch_tasks:{group_wxid}:{(current_hour+1)%24}", *postive_min_members)
+        redis_conn.zrem(key, *postive_min_members)
         
 
 
@@ -587,22 +608,22 @@ def add_bb_member(group_wxid: str, member_wxid: str, msg_content: str, **kwargs)
         bb_in_hour = int(group_config.get("bb_in_hour", "0"))
         bb_timeout_desc = group_config.get("bb_timeout_desc", "您已超时。")
         # 获取指定群id下的报备列表
-        bb_list = list(redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_date}:{current_hour}:*"))
+        bb_list = list(redis_conn.scan_iter(f"history:bb:{current_date}:{group_wxid}:{current_hour}:*"))
         print(f"当前小时报备列表: {bb_list}")
         # 获取还没回来的成员数量
         bb_sum = 0
         if bb_list:
             for bb_key in bb_list:
+                is_timeout = redis_conn.hget(bb_key, "is_timeout")
                 is_back = redis_conn.hget(bb_key, "is_back")
-                if is_back == "0":
+                if is_timeout == "0" and is_back == "0":
                     bb_sum += 1
         if bb_sum >= bb_limit:
             send_message(group_wxid, f"已超过报备人数\r当前设置报备人数:{bb_limit}人")
             return
         # 获取报备列表中当前小时成员的报备的次数
-        bb_count = len(list(redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_date}:{current_hour}:{member_wxid}:*")))
-        # 检查是否超过了一小时内的报备次数
-        bb_count = len(list(redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_date}:{current_hour}:{member_wxid}:*")))
+        bb_count = len(list(redis_conn.scan_iter(f"history:bb:{current_date}:{group_wxid}:{current_hour}:{member_wxid}:*")))
+    
         # 检查是否超过了一小时内的报备次数
         if bb_in_hour <= bb_count:
             send_message(group_wxid, f"已超过每小时报备次数\r当前设置小时报备次数:{bb_in_hour}次")
@@ -612,7 +633,7 @@ def add_bb_member(group_wxid: str, member_wxid: str, msg_content: str, **kwargs)
         time_out = datetime.now() + timedelta(minutes=bb_time)
         create_time = datetime.now()
 
-        key = f"history:bb:{group_wxid}:{current_date}:{current_hour}:{member_wxid}:{current_minute}"
+        key = f"history:bb:{current_date}:{group_wxid}:{current_hour}:{member_wxid}:{current_minute}"
         redis_conn.hset(key, mapping={
                     "group_wxid": group_wxid, "member_wxid": member_wxid, "msg_content": msg_content,
                     "create_time": str(create_time),"back_time": "",
@@ -625,9 +646,10 @@ def add_bb_member(group_wxid: str, member_wxid: str, msg_content: str, **kwargs)
         # 将过期时间转为utc时间
         time_out_utc = time_out.utcfromtimestamp(time_out.timestamp())
         print(f"过期时间(UTC): {time_out_utc} 本地时间: {time_out}")
+
         # 将timeout任务添加到celery队列，到过期时间时候执行，并且指定task_id，方便我们控制
         send_timeout_message.apply_async(args=[group_wxid, member_wxid, msg_content, create_time, bb_timeout_desc, key], 
-                                        eta=time_out_utc, task_id=f"send_timeout_{group_wxid}_{member_wxid}")
+                                        eta=time_out_utc)
     except Exception as e:
         logger.error(f"添加报备时出错: {e}")
 
@@ -638,11 +660,15 @@ def send_timeout_message(group_wxid: str, member_wxid: str, msg_content: str, cr
     """
     try:
         redis_conn = get_redis_connection(0)
-        # 标记为超时
-        redis_conn.hset(key, mapping={
-                    "is_timeout": "1"})
-        asyncio.run(group_repo.add_group_member_bb(group_wxid=group_wxid, member_wxid=member_wxid, msg_content=msg_content, create_time=create_time, is_timeout=1))
-        send_message(group_wxid, f"{at_user(member_wxid)}{bb_timeout_desc}")
+        # 如果没回来，才发送超时消息
+        is_back = redis_conn.hget(key, "is_back")
+        if is_back == "0":
+            # 标记为超时
+            redis_conn.hset(key, mapping={
+                        "is_timeout": "1", "is_back": "0"})
+            
+            asyncio.run(group_repo.add_group_member_bb(group_wxid=group_wxid, member_wxid=member_wxid, msg_content=msg_content, create_time=create_time, is_timeout=1))
+            send_message(group_wxid, f"{at_user(member_wxid)}{bb_timeout_desc}")    
     except Exception as e:
         logger.error(f"发送报备超时消息时出错: {e}")
    
@@ -655,14 +681,14 @@ def delete_bb_member(group_wxid: str, member_wxid: str):
         print(f"删除报备: {group_wxid} {member_wxid}")
         redis_conn = get_redis_connection(0)
         # 先删除超时任务
-        result = AsyncResult(f"send_timeout_{group_wxid}_{member_wxid}")
-        result.revoke(terminate=True)
+        # result = AsyncResult(f"send_timeout_{group_wxid}_{member_wxid}")
+        # result.revoke(terminate=True)
 
         current_hour = datetime.now().hour
         current_minute = datetime.now().minute
         current_date = datetime.now().strftime("%Y-%m-%d")
         # 获取列表
-        bb_list = list(redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_date}:{current_hour}:{member_wxid}:*"))
+        bb_list = list(redis_conn.scan_iter(f"history:bb:{current_date}:{group_wxid}:{current_hour}:{member_wxid}:*"))
         # 如果没有，那再尝试获取上一小时的（因为时间可能跨小时了，注意0点）
         if not bb_list:
             # 如果当前小时是0点，上一小时就是23点
@@ -671,7 +697,7 @@ def delete_bb_member(group_wxid: str, member_wxid: str):
                 current_date = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             else:
                 current_hour -= 1
-            bb_list = list(redis_conn.scan_iter(f"history:bb:{group_wxid}:{current_date}:{current_hour}:{member_wxid}:*"))
+            bb_list = list(redis_conn.scan_iter(f"history:bb:{current_date}:{group_wxid}:{current_hour}:{member_wxid}:*"))
         if not bb_list:
             send_message(group_wxid, f"{at_user(member_wxid)}当前没有报备记录。")
             return
@@ -789,11 +815,13 @@ def save_task_schedule_day_history(cleanup: bool = True):
     """
     try:
         redis_conn = get_redis_connection(0)
+        # 存储今日麦序记录到历史记录，所以使用前一天日期
+        date = (datetime.now() - timedelta(hours=2)).strftime("%Y-%m-%d")
         # 获取launch_tasks的所有key
-        launch_tasks_keys = redis_conn.scan_iter("tasks:launch_tasks:*")
-        date = datetime.now().strftime("%Y-%m-%d")
+        launch_tasks_keys_yesterday = redis_conn.scan_iter(f"tasks:launch_tasks:{date}:*")
+        
         tasks_members = []
-        for key in launch_tasks_keys:
+        for key in launch_tasks_keys_yesterday:
             print(f"key: {key}")
             # 拆分hour
             hour = key.split(":")[-1]
@@ -821,10 +849,34 @@ def save_task_schedule_day_history(cleanup: bool = True):
         else:
             logger.info("暂无群成员扣排记录，无需添加")
         
-        if launch_tasks_keys and cleanup:
-            # 清空所有launch_tasks:* key
-            redis_conn.delete(*launch_tasks_keys)
-            logger.info(f"已清空 {len(launch_tasks_keys)} 个 launch_tasks 缓存")
+        if cleanup:
+            # 清空所有7天前的launch_tasks缓存
+            date_7_days_ago = datetime.now() - timedelta(days=7)
+            expired_date = date_7_days_ago.strftime("%Y-%m-%d")
+            # 获取所有launch_tasks缓存的键值
+            launch_tasks_all_keys = redis_conn.scan_iter("tasks:launch_tasks:*")
+            # 获取所有bb缓存的键值
+            bb_all_keys = redis_conn.scan_iter("history:bb:*")
+
+            all_keys = list(launch_tasks_all_keys) + list(bb_all_keys)
+            keys_to_delete = []
+
+            for key in all_keys:
+                parts = key.split(":")
+                # 拆分date
+                if len(parts) > 3:
+                    key_date = parts[2]
+                    print(f"key_date: {key_date}")
+                else:
+                    continue
+                # 转换为datetime对象
+                key_date_dt = datetime.strptime(key_date, "%Y-%m-%d")
+                # 如果日期早于7天前，加入删除列表
+                if key_date_dt < date_7_days_ago:
+                    keys_to_delete.append(key)
+            if keys_to_delete:
+                redis_conn.delete(*keys_to_delete)
+                logger.info(f"已清空 {len(keys_to_delete)} 个 launch_tasks 缓存")
         else:
             logger.info("launch_tasks 缓存为空，无需清空")
     except Exception as e:

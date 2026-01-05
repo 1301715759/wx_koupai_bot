@@ -25,8 +25,8 @@ class CommandHandler:
     def register_commands(self):
         """注册所有可用命令"""
         self.commands = {
-            "修改群昵称": {
-                "description": "修改群昵称",
+            "修改昵称": {
+                "description": "修改昵称",
                 "handler": self.handle_change_group_name
             },
             "设置欢迎词": {
@@ -342,6 +342,7 @@ class CommandHandler:
         if not welcome_msg:
             return "请提供欢迎词内容"
         await group_repo.update_group_welcome(group_wxid, welcome_msg)
+        await initialize_tasks.update_groups_config(group_wxid, {"welcome_msg": welcome_msg})
         await send_message(group_wxid, f"欢迎词已设置为：{welcome_msg}")
         return f"欢迎词已设置为：{welcome_msg}"
     
@@ -358,6 +359,7 @@ class CommandHandler:
         
         # 这里可以保存退群词到数据库或其他存储
         await group_repo.update_group_leave(group_wxid, leave_msg)
+        await initialize_tasks.update_groups_config(group_wxid, {"exit_msg": leave_msg})
         await send_message(group_wxid, f"退群词已设置为：{leave_msg}")
         return f"退群词已设置为：{leave_msg}"
     async def handle_set_group_maixudesc(self, command: str, group_wxid: str):
@@ -847,11 +849,13 @@ class CommandHandler:
     async def handle_delete_koupai_members_all(self, command: str, group_wxid: str):
         """处理删除所有麦序成员命令"""
         try:
+            current_date = datetime.now().strftime("%Y-%m-%d")
             current_hour = datetime.now().hour
             # 上档作废则为上一个小时的麦序
             if command == "上档作废":
-                current_hour = current_hour - 1
-            delete_koupai_members.delay(group_wxid, current_hour)
+                current_hour = (current_hour - 1) % 24
+                current_date = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d")
+            delete_koupai_members.delay(group_wxid, current_hour, current_date=current_date)
             await send_message(group_wxid, f"{current_hour}点的所有麦序已作废")
         except Exception as e:
             return f"删除所有麦序成员失败：{e}"
@@ -970,7 +974,7 @@ class CommandHandler:
             # 获取成员任务
             member_role = await group_repo.get_all_group_members_roles(group_wxid, members_wxid)
             # 更新redis里的分数
-            self.redis_conn.set(f"member_task:{group_wxid}:{members_wxid}", mapping={
+            self.redis_conn.hset(f"member_task:{group_wxid}:{members_wxid}", mapping={
                 "group_wxid": group_wxid,
                 "member_wxid": members_wxid,
                 "accumulate_score": member_role[4],

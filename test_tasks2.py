@@ -106,8 +106,8 @@ print(f"members: {list(members)}")
 #     print(f"match: {match}")
 # redis_conn.zadd("tasks:launch_tasks:42973360766@chatroom:15", {"wxid_dofg3jonqvre22:10.0": 13})
 # send_task_schedule.delay("42973360766@chatroom", 17)
-current_minute = datetime.datetime.now().minute
-scheduled_task.delay(update_group="42973360766@chatroom", koupai_type="all", schedule_minute=current_minute)
+# current_minute = datetime.datetime.now().minute
+# scheduled_task.delay(update_group="42973360766@chatroom", koupai_type="all", schedule_minute=current_minute)
 # delete_koupai_members.delay("42973360766@chatroom", 16, 1)
 # send_task_schedule_day.delay("42973360766@chatroom", date="2025-12-31")
 
@@ -196,5 +196,5 @@ async def send_all():
 #     # redis是扁平存储，因此不能一次性复制所有key，需要遍历所有key
 #     for key in redis_conn.scan_iter(f"tasks:launch_tasks:{group_key}:*"):
 #         redis_conn.copy(key, f"history:tasks:{group_key}:{date}:{key.split(':')[-1]}", replace=True)
-# scheduled_task.delay(save_history = True)
+scheduled_task.delay(save_history = True)
 
