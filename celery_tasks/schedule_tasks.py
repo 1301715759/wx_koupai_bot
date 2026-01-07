@@ -519,7 +519,8 @@ def delete_koupai_members(group_wxid: str, current_hour: int, delete_count: str 
     try:
         redis_conn = get_redis_connection(0)
         if delete_count == "all":
-            delete_count = 0
+            # 当删除所有成员时，默认设置为较大值删除100个
+            delete_count = 100
         delete_members(redis_conn, group_wxid, current_hour, delete_count, current_date)
     except Exception as e:
         logger.error(f"从扣牌列表中删除指定数量的群组成员时出错: {e}")
@@ -581,14 +582,14 @@ def get_current_maixu(group_wxid: str, **kwargs):
         current_hour = datetime.now().hour
         current_maixu = get_group_task_members(redis_conn, group_wxid, current_hour)
         print(f"current_maixu: {current_maixu}")
-        current_desc = "\r".join(
-                f"{i+1}. @{get_member_nick(group_wxid, member)}({koupai_type})"
-                for i, (member, koupai_type, score, state, _, _, _) in enumerate(current_maixu)
-            )
-        if current_maixu:
+        current_desc = ''
+        for i, (member, koupai_type, score, state, _, _, _) in enumerate(current_maixu):
+            if state != "作废":
+                current_desc += f"{i+1}. @{get_member_nick(group_wxid, member)}({koupai_type})\r"
+        if current_maixu and current_desc != '':
             send_message(group_wxid, f"当前麦序：\r{current_desc}")
         else:
-            send_message(group_wxid, "当前没有设置麦序")
+            send_message(group_wxid, "当前没有麦序")
     except Exception as e:
         logger.error(f"查询当前麦序时出错: {e}")
 @celery_app.task

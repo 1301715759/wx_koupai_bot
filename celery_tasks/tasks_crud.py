@@ -134,7 +134,7 @@ def delete_members(redis_conn, group_wxid: str, current_hour: int, count: int = 
 
     key = f"tasks:launch_tasks:{current_date}:{group_wxid}:{current_hour}"
     print(f"key: {key}")
-
+    
     min_members = redis_conn.zrangebyscore(key, min=-1000, max=float('inf'), start=0, num=count, withscores=True)
     print(f"min_members: {min_members}")
     for member, score in min_members:

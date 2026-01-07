@@ -12,7 +12,7 @@ def validate_time_slot_format(time_slot: str) -> Tuple[bool, Optional[str]]:
     """
     # 使用正则表达式匹配格式
     # ^表示字符串开头，\d+表示至少一个数字，-是连字符，\d+表示至少一个数字，\D+表示至少一个非数字字符，$表示字符串结尾
-    pattern = r'^(\d+)-(\d+)(\D+)$'
+    pattern = r'^(\d+)-(\d+)([\s\S]*)$'
     match = re.match(pattern, time_slot)
     if not match:
         return False, f"格式错误: '{time_slot}' 不符合 '数字-数字+非数字' 格式"
@@ -54,7 +54,7 @@ def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, str, int, int]]:
     参数:
         time_slots: 时间段字符串数组，如 ["0-2a", "2-4b"] ["0-2dd连排", "2-4a"]
     返回:
-        解析后的时间段列表，每个元素为 (非数字, 连排情况（不存在则为空字符串）, 数字1, 数字2, schedule_start, schedule_end)
+        解析后的时间段列表，每个元素为 (场次描述, 连排时间段（起始、期间、结束）, start_hour, end_hour, schedule_start, schedule_end)
     """
     # 先按起始数字从小到大排序
     time_slots_sorted = sorted(time_slots, key=lambda x: int(re.match(r'^(\d+)-', x).group(1)))
@@ -64,7 +64,7 @@ def parse_time_slots(time_slots: List[str]) -> List[Tuple[str, str, int, int]]:
         is_valid, error_msg = validate_time_slot_format(time_slot)
         if not is_valid:
             raise ValueError(error_msg)
-        num1_str, num2_str, suffix = re.match(r'^(\d+)-(\d+)(\D+)$', time_slot).groups()
+        num1_str, num2_str, suffix = re.match(r'^(\d+)-(\d+)([\s\S]*)$', time_slot).groups()
         num1 = int(num1_str)
         num2 = int(num2_str)
         # 检查时间交叉：当前起始必须大于等于上一个结束
@@ -119,3 +119,4 @@ def parse_at_message(message: str) -> str:
 
 
 # print(parse_at_message("补@\\u2764\\uFE0F\\u2005"))
+print(validate_time_slot_format('19-20\uD83D\uDE08'))

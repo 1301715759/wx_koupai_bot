@@ -237,6 +237,7 @@ class CommandHandler:
             return await self.handle_set_fixed_renwu_desc(command, group_wxid)
         elif command in ["当前麦序", "查询麦序", "查询当前麦序"]:
             return await self.handle_view_current_maixu(group_wxid)
+        
         elif command == "取":
             return await self.handle_remove_member(group_wxid, kwargs.get("msg_owner"), kwargs.get("at_user"))
         elif command == "补":
@@ -277,7 +278,7 @@ class CommandHandler:
             return await self.handle_set_bb_in_hour(command, group_wxid)
         elif command.startswith("设置报备回厅词"):
             return await self.handle_set_bb_back_desc(command, group_wxid)
-        elif command in ["本档作废", "上档作废"]:
+        elif command in ["本档作废", "上档作废", "下档作废"]:
             return await self.handle_delete_koupai_members_all(command, group_wxid)
         elif command.startswith("设置麦序作废人数"):
             return await self.handle_delete_koupai_members(command, group_wxid)
@@ -855,8 +856,11 @@ class CommandHandler:
             if command == "上档作废":
                 current_hour = (current_hour - 1) % 24
                 current_date = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%d")
+            if command == "下档作废":
+                current_hour = (current_hour + 1) % 24
+                current_date = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d")
             delete_koupai_members.delay(group_wxid, current_hour, current_date=current_date)
-            await send_message(group_wxid, f"{current_hour}点的所有麦序已作废")
+            await send_message(group_wxid, f"{current_hour}点场的所有麦序已作废")
         except Exception as e:
             return f"删除所有麦序成员失败：{e}"
     async def handle_delete_koupai_members(self, command: str, group_wxid: str):
@@ -882,6 +886,7 @@ class CommandHandler:
             if at_user:
                 msg_owner = at_user[0]
             # 格式为 换主持10-15
+            print(f"换主持命令：{command}")
             transfer_host = re.search(r'换主持(\d+)-(\d+)', command)
             if not transfer_host:
                 return "命令格式错误，请使用：换主持10-15"
@@ -892,6 +897,7 @@ class CommandHandler:
             if int(start_hour) >= int(end_hour):
                 return "开始时间必须早于结束时间"
             # 更换临时主持
+
             member_nick = get_member_nick(group_wxid, msg_owner)
             await initialize_tasks.update_group_tasks_host_desc(group_wxid, start_hour, end_hour, member_nick)
             await send_message(group_wxid, f"{start_hour}-{end_hour}主持已设置为：{member_nick}")
@@ -973,6 +979,9 @@ class CommandHandler:
                 members_wxid = msg_owner
             # 获取成员任务
             member_role = await group_repo.get_all_group_members_roles(group_wxid, members_wxid)
+            if not member_role:
+                #不存在成员，将分数默认设置为0.0
+                member_role = [group_wxid, members_wxid, "member", 0, 0.0, 0.0]
             # 更新redis里的分数
             self.redis_conn.hset(f"member_task:{group_wxid}:{members_wxid}", mapping={
                 "group_wxid": group_wxid,
@@ -1015,6 +1024,9 @@ class CommandHandler:
                 return
             # 获取成员任务
             member_role = await group_repo.get_all_group_members_roles(group_wxid, members_wxid)
+            if not member_role:
+                #不存在成员，将分数默认设置为0.0
+                member_role = [group_wxid, members_wxid, "member", 0, 0.0, 0.0]
             print(member_role)
             if task_type == "accumulate_score":
                 old_accumulate_score = member_role[4]

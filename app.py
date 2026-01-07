@@ -104,7 +104,7 @@ async def handle_event(event: dict):
                                     "清空固定排", "查询固定排", "添加", "设置手速", "设置任务排",
                                     "设置报备时间", "设置报备人数", "设置固定手速",
                                     "设置报备次数", "设置报备回厅词", "设置报备超时提示词",
-                                    "设置麦序作废人数", "本档作废", "上档作废", "换主持", "禁排", "取消禁排",
+                                    "设置麦序作废人数", "本档作废", "上档作废", "下档作废", "换主持", "禁排", "取消禁排",
                                     "今日麦序", "昨日麦序", "累计任务", "累计过")) or "固定排" in msg_content:
             print(f"收到命令: {msg_content}")
             response = await command_handler.handle_command(msg_content, group_wxid, msg_owner=msg_owner, at_user=at_user)

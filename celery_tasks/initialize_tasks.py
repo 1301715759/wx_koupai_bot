@@ -12,6 +12,7 @@ if str(project_root) not in sys.path:
 from db.database import db_manager
 from db.repository import group_repo, command_repo
 from cache.redis_pool import get_redis_connection
+from command.rules.hostPhrase_rules import parse_time_slots
 import asyncio
 # 防止循环导入
 # from celery_tasks.schedule_tasks import scheduled_task
@@ -143,7 +144,7 @@ class InitializeTasks:
                 print(f"当前host: {host}, 固定排成员: {fixed_host}")
                 if host[2] == fixed_host[1]:
                     fixed_wxid.append(fixed_host[3])
-                    break
+                
             formatted_hosts.append({
                 "group_wxid": group_wxid,
                 "start_hour": host[2],
@@ -158,9 +159,33 @@ class InitializeTasks:
         print(f"已添加群组 {group_wxid} 的所有任务")
     async def update_group_tasks_host_desc(self, group_wxid:str, start_hour:str, end_hour:str, host_desc:str):
         """更新指定群组指定时间范围的主持(临时，重启或者换天后会失效)"""
+        time_slots = parse_time_slots([f"{start_hour}-{end_hour}{host_desc}"])
+        # 查询固定排成员
+        fixed_hosts_schedules = await group_repo.get_fixed_hosts(group_wxid)
         # 扫描所有符合前缀的 key
-        for hour in range(int(start_hour), int(end_hour)):
-            self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:{hour}", mapping={"host_desc": host_desc})
+        for host_desc, stage, start_hour, end_hour, schedule_start, schedule_end in time_slots:
+            fixed_wxid = []
+            # 查询固定排成员
+            for fixed_host in fixed_hosts_schedules:
+                # 检查是否匹配当前host的固定排成员
+                if start_hour == fixed_host[1]:
+                    fixed_wxid.append(fixed_host[3])
+                    
+            #先检查是否存在该任务
+            if not self.redis_client.exists(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:{start_hour}"):
+                # 不存在该任务，创建新任务
+                self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:{start_hour}", mapping={
+                    "group_wxid": group_wxid,
+                    "start_hour": start_hour,
+                    "host_desc": host_desc,
+                    "stage": stage,
+                    "start_schedule": schedule_start,
+                    "end_schedule": schedule_end,
+                    "fixed_hosts": json.dumps(fixed_wxid)
+                })
+            else:
+                # 存在该任务，更新任务的host_desc和fixed_hosts
+                self.redis_client.hset(f"{self.HOSTS_TASK_CONFIG_KEY}:{group_wxid}:{start_hour}", "host_desc", host_desc)
         
     async def update_group_tasks_fixed_hosts(self, group_wxid: str):
         """更新指定群fixed_hosts"""
